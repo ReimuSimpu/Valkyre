@@ -164,6 +164,64 @@ function DrawingESP:CreateVisual(Tab, Title, Data)
     Section:AddToggle("",{Title="Show Distance",Default=true}):OnChanged(function(v) Group.Settings.ShowDistance=v end)
 end
 
+function DrawingESP:CreateGroup(Name, Data)
+    DrawingESP.Groups[Name] = {
+        Objects = {},
+        Enabled = Data.Enabled or false,
+        Box = true,
+        Text = true,
+        Settings = {
+            Color = Data.Color or Color3.new(1,1,1),
+            MaxDistance = Data.MaxDistance or 200,
+            ShowDistance = true
+        }
+    }
+
+    local Group = DrawingESP.Groups[Name]
+
+    local function Add(part, name)
+        if not part then return end
+        table.insert(Group.Objects, DrawingESP:NewESP(part,{
+            Name = name or Name,
+            Color = Group.Settings.Color
+        }))
+    end
+
+    if Data.Container then
+        for _,v in pairs(Data.Container:GetDescendants()) do
+            if v:IsA("BasePart") then Add(v) end
+        end
+
+        Data.Container.DescendantAdded:Connect(function(v)
+            if v:IsA("BasePart") then Add(v) end
+        end)
+    end
+
+    if Data.IsPlayerESP then
+        local function AddPlayer(plr)
+            if plr == LocalPlayer then return end
+
+            plr.CharacterAdded:Connect(function(char)
+                local root = char:WaitForChild("HumanoidRootPart",5)
+                if root then Add(root, plr.Name) end
+            end)
+
+            if plr.Character then
+                local root = plr.Character:FindFirstChild("HumanoidRootPart")
+                if root then Add(root, plr.Name) end
+            end
+        end
+
+        for _,p in pairs(Players:GetPlayers()) do
+            AddPlayer(p)
+        end
+
+        Players.PlayerAdded:Connect(AddPlayer)
+    end
+
+    return Group
+end
+
 return DrawingESP
 
 --[[
