@@ -1,5 +1,4 @@
 -- Script made by ChatGPT
-
 local DrawingESP = {}
 DrawingESP.__index = DrawingESP
 
@@ -27,16 +26,11 @@ function DrawingESP:NewESP(part, name)
     text.Font = Drawing.Fonts.Monospace
     text.Visible = false
 
-    local tracer = Drawing.new("Line")
-    tracer.Thickness = 1
-    tracer.Visible = false
-
     return {
         Part = part,
         Name = name or part.Name,
         Box = box,
-        Text = text,
-        Tracer = tracer
+        Text = text
     }
 end
 
@@ -49,12 +43,7 @@ function DrawingESP:Update()
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return end
 
-    local viewport = Camera.ViewportSize
-    local bottom = Vector2.new(viewport.X/2, viewport.Y)
-
     for _, group in pairs(self.Groups) do
-        if not group.Enabled then continue end
-
         local maxDist = group.MaxDistance or 200
         local color = group.Color or Color3.new(1,1,1)
 
@@ -65,8 +54,14 @@ function DrawingESP:Update()
             if not part or not part.Parent then
                 esp.Box:Remove()
                 esp.Text:Remove()
-                esp.Tracer:Remove()
                 table.remove(group.Objects, i)
+                continue
+            end
+
+            -- 🛑 FIX: ALWAYS hide if disabled
+            if not group.Enabled then
+                esp.Box.Visible = false
+                esp.Text.Visible = false
                 continue
             end
 
@@ -74,7 +69,6 @@ function DrawingESP:Update()
             if dist > maxDist then
                 esp.Box.Visible = false
                 esp.Text.Visible = false
-                esp.Tracer.Visible = false
                 continue
             end
 
@@ -83,15 +77,14 @@ function DrawingESP:Update()
             if not onScreen then
                 esp.Box.Visible = false
                 esp.Text.Visible = false
-                esp.Tracer.Visible = false
                 continue
             end
 
-            -- 📦 BOX (simple + stable)
-            if group.Box then
-                local size = math.clamp(300 / dist * 10, 25, 150)
-                local boxPos = Vector2.new(pos.X - size/2, pos.Y - size/2)
+            local size = math.clamp(300 / dist * 10, 25, 150)
+            local boxPos = Vector2.new(pos.X - size/2, pos.Y - size/2)
 
+            -- 📦 BOX
+            if group.Box then
                 esp.Box.Position = boxPos
                 esp.Box.Size = Vector2.new(size, size)
                 esp.Box.Color = color
@@ -100,24 +93,14 @@ function DrawingESP:Update()
                 esp.Box.Visible = false
             end
 
-            -- 📝 TEXT
+            -- 📝 TEXT (name only)
             if group.Text then
-                esp.Text.Text = esp.Name .. (" [%d]"):format(dist)
-                esp.Text.Position = Vector2.new(pos.X, pos.Y - 20)
+                esp.Text.Text = esp.Name
+                esp.Text.Position = Vector2.new(pos.X, boxPos.Y - 15)
                 esp.Text.Color = color
                 esp.Text.Visible = true
             else
                 esp.Text.Visible = false
-            end
-
-            -- 🔫 TRACER
-            if group.Tracer then
-                esp.Tracer.From = bottom
-                esp.Tracer.To = Vector2.new(pos.X, pos.Y)
-                esp.Tracer.Color = color
-                esp.Tracer.Visible = true
-            else
-                esp.Tracer.Visible = false
             end
         end
     end
@@ -132,15 +115,17 @@ end)
 --====================================================
 
 function DrawingESP:CreateGroup(Name, Data)
+    if DrawingESP.Groups[Name] then
+        return DrawingESP.Groups[Name]
+    end
+
     DrawingESP.Groups[Name] = {
         Objects = {},
         Enabled = Data.Enabled or false,
         Color = Data.Color or Color3.new(1,1,1),
         MaxDistance = Data.MaxDistance or 200,
-
         Box = true,
-        Text = true,
-        Tracer = false
+        Text = true
     }
 
     local Group = DrawingESP.Groups[Name]
