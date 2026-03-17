@@ -1,3 +1,4 @@
+loadstring([[ function LPH_NO_VIRTUALIZE(f) return f end; ]])();
 local DrawingESP = {}
 DrawingESP.__index = DrawingESP
 
@@ -114,13 +115,13 @@ end
 -- Throttle for performance
 do
     local Accum = 0
-    RunService.RenderStepped:Connect(function(dt)
+    RunService.RenderStepped:Connect(LPH_NO_VIRTUALIZE(function(dt)
         Accum += dt
         if Accum < 0.03 then return end
         Accum = 0
 
         DrawingESP:Update()
-    end)
+    end))
 end
 
 --====================================================
