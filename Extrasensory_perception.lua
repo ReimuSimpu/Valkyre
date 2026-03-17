@@ -1,5 +1,6 @@
 -- DrawingESP Library v1.0
 -- External library for creating performant ESP (Players/Objects) in Roblox
+-- Credits https://github.com/Exunys/Exunys-ESP/blob/main/src/ESP.lua & ChatGPT for quick with slight modifactions by myself
 
 local DrawingESP = {}
 DrawingESP.__index = DrawingESP
@@ -176,7 +177,7 @@ ESP:CreateVisual(Tabs.Visuals, "Players", {
     Enabled = true
 })
 ESP:CreateVisual(Tabs.Visuals, "Diamonds", {
-    Container = workspace.THINGS),
+    Container = workspace:FindFirstChild("CollectibleDiamonds"),
     Color = Color3.fromRGB(0,255,255),
     MaxDistance = 250,
     Enabled = true
