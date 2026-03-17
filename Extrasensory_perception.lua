@@ -1,252 +1,184 @@
-local ESP = {}
-ESP.Groups = {}
+-- DrawingESP Library v1.0
+-- External library for creating performant ESP (Players/Objects) in Roblox
 
+local DrawingESP = {}
+DrawingESP.__index = DrawingESP
+
+DrawingESP.Groups = {}
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local Camera = workspace.CurrentCamera
-
 local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+local RunService = game:GetService("RunService")
 
-local RootPart, LastRootUpdate = nil, 0
+--[[ 
+    Creates a new ESP object for a part
+    @param part BasePart - The target part to ESP
+    @param settings table - Optional configuration
+        Name string - Name to display
+        Color Color3 - Box color
+        OutlineColor Color3 - Outline color
+        TextColor Color3 - Text color
+        MaxDistance number - Visibility distance
+        ShowDistance boolean - Display distance
+]]
+function DrawingESP:NewESP(part, settings)
+    settings = settings or {}
+    local outline = Drawing.new("Square")
+    outline.Thickness = 3
+    outline.Filled = false
+    outline.Transparency = 1
+    outline.Color = settings.OutlineColor or Color3.new(0,0,0)
 
-local function GetRoot()
-	if os.clock() - LastRootUpdate > 0.1 then
-		local char = LocalPlayer.Character
-		RootPart = char and char:FindFirstChild("HumanoidRootPart")
-		LastRootUpdate = os.clock()
-	end
-	return RootPart
+    local box = Drawing.new("Square")
+    box.Thickness = 1
+    box.Filled = false
+    box.Transparency = 1
+    box.Color = settings.Color or Color3.new(1,1,1)
+
+    local text = Drawing.new("Text")
+    text.Size = 14
+    text.Center = true
+    text.Outline = true
+    text.Font = Drawing.Fonts.Monospace
+    text.Color = settings.TextColor or Color3.new(1,1,1)
+    text.Text = settings.Name or part.Name
+
+    return {
+        Part = part,
+        Box = box,
+        Outline = outline,
+        Text = text,
+        Settings = settings
+    }
 end
 
-local function NewDrawing(Type)
-	local obj = Drawing.new(Type)
-	obj.Visible = false
-	return obj
+-- Updates all ESP objects
+function DrawingESP:Update()
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    for _, group in pairs(self.Groups) do
+        if not group.Enabled then continue end
+        for i=#group.Objects,1,-1 do
+            local esp = group.Objects[i]
+            local part = esp.Part
+            if not part or not part.Parent then
+                esp.Box:Remove()
+                esp.Outline:Remove()
+                esp.Text:Remove()
+                table.remove(group.Objects, i)
+                continue
+            end
+            local dist = (part.Position - root.Position).Magnitude
+            if dist > group.Settings.MaxDistance then
+                esp.Box.Visible = false
+                esp.Outline.Visible = false
+                esp.Text.Visible = false
+                continue
+            end
+            local pos, visible = Camera:WorldToViewportPoint(part.Position)
+            if not visible then
+                esp.Box.Visible = false
+                esp.Outline.Visible = false
+                esp.Text.Visible = false
+                continue
+            end
+            local size = math.clamp(300/dist*10,30,200)
+            local boxPos = Vector2.new(pos.X-size/2,pos.Y-size/2)
+            esp.Box.Position = boxPos
+            esp.Box.Size = Vector2.new(size,size)
+            esp.Box.Visible = true
+            esp.Outline.Position = boxPos
+            esp.Outline.Size = Vector2.new(size,size)
+            esp.Outline.Visible = true
+            local text = esp.Settings.Name or part.Name
+            if esp.Settings.ShowDistance then text = text .. (" [%d]"):format(dist) end
+            esp.Text.Position = Vector2.new(pos.X, boxPos.Y-15)
+            esp.Text.Text = text
+            esp.Text.Visible = true
+        end
+    end
 end
 
-local function CreateObject(Part, Name, Color)
-	return {
-		Part = Part,
-		Name = Name,
-		Color = Color,
+RunService.RenderStepped:Connect(function() DrawingESP:Update() end)
 
-		Box = NewDrawing("Square"),
-		Outline = NewDrawing("Square"),
-		Text = NewDrawing("Text"),
-		Tracer = NewDrawing("Line"),
+--[[ 
+    Creates a visual group
+    @param Tab Fluent tab section
+    @param Title string - Name of the ESP group
+    @param Data table - Configuration
+        Container Instance - Folder/Model for parts
+        Color Color3 - Box color
+        MaxDistance number - Distance
+        IsPlayerESP boolean - ESP for players
+        Enabled boolean - Default enabled state
+]]
+function DrawingESP:CreateVisual(Tab, Title, Data)
+    DrawingESP.Groups[Title] = {
+        Objects = {},
+        Enabled = Data.Enabled or false,
+        Settings = {
+            Color = Data.Color or Color3.new(1,1,1),
+            MaxDistance = Data.MaxDistance or 200,
+            ShowDistance = true
+        }
+    }
+    local Group = DrawingESP.Groups[Title]
+    local function Add(part, name)
+        if not part then return end
+        table.insert(Group.Objects, DrawingESP:NewESP(part,{
+            Name = name or Title,
+            Color = Group.Settings.Color,
+            MaxDistance = Group.Settings.MaxDistance,
+            ShowDistance = Group.Settings.ShowDistance
+        }))
+    end
 
-		Skeleton = {}
-	}
+    if Data.Container then
+        for _,v in pairs(Data.Container:GetDescendants()) do if v:IsA("BasePart") then Add(v) end end
+        Data.Container.DescendantAdded:Connect(function(v) if v:IsA("BasePart") then Add(v) end end)
+    end
+
+    if Data.IsPlayerESP then
+        local function AddPlayer(plr)
+            if plr==LocalPlayer then return end
+            plr.CharacterAdded:Connect(function(char)
+                local root = char:WaitForChild("HumanoidRootPart",5)
+                if root then Add(root,plr.Name) end
+            end)
+            if plr.Character then
+                local root = plr.Character:FindFirstChild("HumanoidRootPart")
+                if root then Add(root,plr.Name) end
+            end
+        end
+        for _,p in pairs(Players:GetPlayers()) do AddPlayer(p) end
+        Players.PlayerAdded:Connect(AddPlayer)
+    end
+
+    local Section = Tab:AddSection(Title.." ESP")
+    Section:AddToggle("",{Title="Enabled",Default=Group.Enabled}):OnChanged(function(v) Group.Enabled=v end)
+    Section:AddColorpicker("",{Title="Color",Default=Group.Settings.Color}):OnChanged(function(v) Group.Settings.Color=v end)
+    Section:AddSlider("",{Title="Max Distance",Min=10,Max=1000,Default=Group.Settings.MaxDistance}):OnChanged(function(v) Group.Settings.MaxDistance=v end)
+    Section:AddToggle("",{Title="Show Distance",Default=true}):OnChanged(function(v) Group.Settings.ShowDistance=v end)
 end
 
-local SkeletonMap = {
-	{"Head","UpperTorso"},{"UpperTorso","LowerTorso"},
-	{"UpperTorso","LeftUpperArm"},{"LeftUpperArm","LeftLowerArm"},
-	{"UpperTorso","RightUpperArm"},{"RightUpperArm","RightLowerArm"},
-	{"LowerTorso","LeftUpperLeg"},{"LeftUpperLeg","LeftLowerLeg"},
-	{"LowerTorso","RightUpperLeg"},{"RightUpperLeg","RightLowerLeg"}
-}
+return DrawingESP
 
-local function RemoveObject(Object)
-	Object.Box:Remove()
-	Object.Outline:Remove()
-	Object.Text:Remove()
-	Object.Tracer:Remove()
-	for _,Line in pairs(Object.Skeleton) do
-		Line:Remove()
-	end
-end
+--[[
+Example Usage:
 
-local function UpdateObject(Group, Object)
-	local Part = Object.Part
-	if not Part or not Part.Parent then
-		return false
-	end
-
-	local Root = GetRoot()
-	if not Root then return true end
-
-	local Distance = (Part.Position - Root.Position).Magnitude
-	if Distance > Group.MaxDistance then
-		Object.Box.Visible = false
-		Object.Outline.Visible = false
-		Object.Text.Visible = false
-		Object.Tracer.Visible = false
-		for _,Line in pairs(Object.Skeleton) do Line.Visible = false end
-		return true
-	end
-
-	local ScreenPos, OnScreen = Camera:WorldToViewportPoint(Part.Position)
-	if not OnScreen then
-		Object.Box.Visible = false
-		Object.Outline.Visible = false
-		Object.Text.Visible = false
-		Object.Tracer.Visible = false
-		for _,Line in pairs(Object.Skeleton) do Line.Visible = false end
-		return true
-	end
-
-	local Scale = math.clamp(300 / Distance * 10, 20, 150)
-	local BoxPos = Vector2.new(ScreenPos.X - Scale/2, ScreenPos.Y - Scale/2)
-
-	if Group.Box then
-		Object.Box.Position = BoxPos
-		Object.Box.Size = Vector2.new(Scale, Scale)
-		Object.Box.Color = Group.Color
-		Object.Box.Thickness = 1
-		Object.Box.Visible = true
-
-		Object.Outline.Position = BoxPos
-		Object.Outline.Size = Vector2.new(Scale, Scale)
-		Object.Outline.Color = Color3.new(0,0,0)
-		Object.Outline.Thickness = 3
-		Object.Outline.Visible = true
-	else
-		Object.Box.Visible = false
-		Object.Outline.Visible = false
-	end
-
-	if Group.Text then
-		local Text = Object.Name
-		if Group.ShowDistance then
-			Text = Text .. " [" .. math.floor(Distance) .. "]"
-		end
-
-		Object.Text.Position = Vector2.new(ScreenPos.X, BoxPos.Y - 14)
-		Object.Text.Text = Text
-		Object.Text.Color = Group.Color
-		Object.Text.Size = Group.TextSize
-		Object.Text.Center = true
-		Object.Text.Outline = true
-		Object.Text.Visible = true
-	else
-		Object.Text.Visible = false
-	end
-
-	if Group.Tracer then
-		local Viewport = Camera.ViewportSize
-		Object.Tracer.From = Vector2.new(Viewport.X/2, Viewport.Y)
-		Object.Tracer.To = Vector2.new(ScreenPos.X, ScreenPos.Y)
-		Object.Tracer.Color = Group.Color
-		Object.Tracer.Thickness = 1
-		Object.Tracer.Visible = true
-	else
-		Object.Tracer.Visible = false
-	end
-
-	if Group.Skeleton and Part.Parent:FindFirstChild("Humanoid") then
-		for Index,Pair in ipairs(SkeletonMap) do
-			local A = Part.Parent:FindFirstChild(Pair[1])
-			local B = Part.Parent:FindFirstChild(Pair[2])
-
-			if A and B then
-				local Line = Object.Skeleton[Index] or NewDrawing("Line")
-				Object.Skeleton[Index] = Line
-
-				local APos, AVis = Camera:WorldToViewportPoint(A.Position)
-				local BPos, BVis = Camera:WorldToViewportPoint(B.Position)
-
-				if AVis and BVis then
-					Line.From = Vector2.new(APos.X, APos.Y)
-					Line.To = Vector2.new(BPos.X, BPos.Y)
-					Line.Color = Group.Color
-					Line.Thickness = 1
-					Line.Visible = true
-				else
-					Line.Visible = false
-				end
-			end
-		end
-	else
-		for _,Line in pairs(Object.Skeleton) do
-			Line.Visible = false
-		end
-	end
-
-	return true
-end
-
-if not getgenv().__ADV_ESP__ then
-	getgenv().__ADV_ESP__ = true
-
-	RunService.RenderStepped:Connect(function()
-		for _,Group in pairs(ESP.Groups) do
-			if not Group.Enabled then continue end
-
-			for i = #Group.Objects, 1, -1 do
-				local Obj = Group.Objects[i]
-				local Alive = UpdateObject(Group, Obj)
-
-				if not Alive then
-					RemoveObject(Obj)
-					table.remove(Group.Objects, i)
-				end
-			end
-		end
-	end)
-end
-
-function ESP:CreateGroup(Name, Config)
-	local Group = {
-		Name = Name,
-		Objects = {},
-
-		Enabled = Config.Enabled or false,
-		Color = Config.Color or Color3.new(1,1,1),
-		MaxDistance = Config.MaxDistance or 200,
-
-		Box = true,
-		Text = true,
-		Tracer = false,
-		Skeleton = Config.IsPlayerESP or false,
-
-		ShowDistance = true,
-		TextSize = 13
-	}
-
-	self.Groups[Name] = Group
-
-	local function Add(Part, DisplayName)
-		table.insert(Group.Objects, CreateObject(Part, DisplayName or Name, Group.Color))
-	end
-
-	if Config.Container then
-		for _,Obj in pairs(Config.Container:GetDescendants()) do
-			if Obj:IsA("BasePart") then
-				Add(Obj)
-			end
-		end
-
-		Config.Container.DescendantAdded:Connect(function(Obj)
-			if Obj:IsA("BasePart") then
-				Add(Obj)
-			end
-		end)
-	end
-
-	if Config.IsPlayerESP then
-		local function HandlePlayer(Player)
-			if Player == Players.LocalPlayer then return end
-
-			Player.CharacterAdded:Connect(function(Char)
-				local Root = Char:WaitForChild("HumanoidRootPart", 5)
-				if Root then Add(Root, Player.Name) end
-			end)
-
-			if Player.Character then
-				local Root = Player.Character:FindFirstChild("HumanoidRootPart")
-				if Root then Add(Root, Player.Name) end
-			end
-		end
-
-		for _,Player in pairs(Players:GetPlayers()) do
-			HandlePlayer(Player)
-		end
-
-		Players.PlayerAdded:Connect(HandlePlayer)
-	end
-
-	return Group
-end
-
-return ESP
+local ESP = loadstring(game:HttpGet("https://raw.githubusercontent.com/yourname/DrawingESP/main/ESP.lua"))()
+ESP:CreateVisual(Tabs.Visuals, "Players", {
+    IsPlayerESP = true,
+    Color = Color3.fromRGB(255,100,100),
+    MaxDistance = 300,
+    Enabled = true
+})
+ESP:CreateVisual(Tabs.Visuals, "Diamonds", {
+    Container = workspace.THINGS),
+    Color = Color3.fromRGB(0,255,255),
+    MaxDistance = 250,
+    Enabled = true
+})
+]]
