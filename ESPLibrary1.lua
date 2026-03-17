@@ -2,6 +2,7 @@ local DrawingESP = {}
 DrawingESP.__index = DrawingESP
 
 DrawingESP.Groups = {}
+DrawingESP._globalParts = {}
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
@@ -56,9 +57,8 @@ function DrawingESP:Update()
                 pcall(function() esp.Box:Remove() end)
                 pcall(function() esp.Text:Remove() end)
 
-                if group._addedParts then
-                    group._addedParts[part] = nil
-                end
+                group._addedParts[part] = nil
+                DrawingESP._globalParts[part] = nil
 
                 table.remove(group.Objects, i)
                 continue
@@ -111,12 +111,12 @@ function DrawingESP:Update()
     end
 end
 
--- Throttled update (better performance)
+-- Throttle for performance
 do
     local Accum = 0
     RunService.RenderStepped:Connect(function(dt)
         Accum += dt
-        if Accum < 0.03 then return end -- ~30 FPS
+        if Accum < 0.03 then return end
         Accum = 0
 
         DrawingESP:Update()
@@ -145,28 +145,48 @@ function DrawingESP:CreateGroup(Name, Data)
     DrawingESP.Groups[Name] = Group
 
     local function Add(part, name)
-        if not part or Group._addedParts[part] then return end
+        if not part then return end
+        if DrawingESP._globalParts[part] then return end
 
         table.insert(Group.Objects, DrawingESP:NewESP(part, name))
         Group._addedParts[part] = true
+        DrawingESP._globalParts[part] = true
     end
 
-    -- OBJECT ESP
+    --====================================================
+    -- OBJECT ESP (FIXED)
+    --====================================================
+
     if Data.Container then
-        for _,v in pairs(Data.Container:GetDescendants()) do
-            if v:IsA("BasePart") then
-                Add(v)
+        local function Handle(v)
+            if not v:IsA("BasePart") then return end
+
+            local model = v:FindFirstAncestorOfClass("Model")
+
+            -- ❌ Ignore player characters / humanoids
+            if model and model:FindFirstChildOfClass("Humanoid") then
+                return
+            end
+
+            -- ✅ If model has PrimaryPart, only track that
+            if model and model.PrimaryPart then
+                Add(model.PrimaryPart, model.Name)
+            else
+                Add(v, v.Name)
             end
         end
 
-        Data.Container.DescendantAdded:Connect(function(v)
-            if v:IsA("BasePart") then
-                Add(v)
-            end
-        end)
+        for _,v in pairs(Data.Container:GetDescendants()) do
+            Handle(v)
+        end
+
+        Data.Container.DescendantAdded:Connect(Handle)
     end
 
+    --====================================================
     -- PLAYER ESP
+    --====================================================
+
     if Data.IsPlayerESP then
         local function AddPlayer(plr)
             if plr == LocalPlayer then return end
