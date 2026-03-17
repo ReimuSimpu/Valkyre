@@ -1,198 +1,265 @@
 -- DrawingESP Library v1.0
 -- External library for creating performant ESP (Players/Objects) in Roblox
 -- Credits https://github.com/Exunys/Exunys-ESP/blob/main/src/ESP.lua & ChatGPT for quick with slight modifactions by myself
-
 local DrawingESP = {}
 DrawingESP.__index = DrawingESP
 
 DrawingESP.Groups = {}
+
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 local RunService = game:GetService("RunService")
 
---[[ 
-    Creates a new ESP object for a part
-    @param part BasePart - The target part to ESP
-    @param settings table - Optional configuration
-        Name string - Name to display
-        Color Color3 - Box color
-        OutlineColor Color3 - Outline color
-        TextColor Color3 - Text color
-        MaxDistance number - Visibility distance
-        ShowDistance boolean - Display distance
-]]
+--====================================================
+-- HELPERS
+--====================================================
+
+local function WorldToScreen(pos)
+    local v, vis = Camera:WorldToViewportPoint(pos)
+    return Vector2.new(v.X, v.Y), vis
+end
+
+local function IsVisible(origin, target, ignore)
+    local params = RaycastParams.new()
+    params.FilterDescendantsInstances = ignore
+    params.FilterType = Enum.RaycastFilterType.Blacklist
+
+    local result = workspace:Raycast(origin, (target - origin), params)
+    return not result
+end
+
+local function GetCorners(pos, size)
+    local x,y = pos.X, pos.Y
+    local w,h = size.X, size.Y
+    local s = 0.25
+
+    return {
+        {Vector2.new(x,y), Vector2.new(x+w*s,y)},
+        {Vector2.new(x,y), Vector2.new(x,y+h*s)},
+
+        {Vector2.new(x+w,y), Vector2.new(x+w-w*s,y)},
+        {Vector2.new(x+w,y), Vector2.new(x+w,y+h*s)},
+
+        {Vector2.new(x,y+h), Vector2.new(x+w*s,y+h)},
+        {Vector2.new(x,y+h), Vector2.new(x,y+h-h*s)},
+
+        {Vector2.new(x+w,y+h), Vector2.new(x+w-w*s,y+h)},
+        {Vector2.new(x+w,y+h), Vector2.new(x+w,y+h-h*s)},
+    }
+end
+
+--====================================================
+-- NEW ESP OBJECT
+--====================================================
 
 function DrawingESP:NewESP(part, settings)
     settings = settings or {}
-
-    local outline = Drawing.new("Square")
-    outline.Thickness = 3
-    outline.Filled = false
-    outline.Transparency = 1
-    outline.Color = settings.OutlineColor or Color3.new(0,0,0)
-
-    local box = Drawing.new("Square")
-    box.Thickness = 1
-    box.Filled = false
-    box.Transparency = 1
-    box.Color = settings.Color or Color3.new(1,1,1)
 
     local text = Drawing.new("Text")
     text.Size = 14
     text.Center = true
     text.Outline = true
     text.Font = Drawing.Fonts.Monospace
-    text.Color = settings.TextColor or Color3.new(1,1,1)
-    text.Text = settings.Name or part.Name
 
     local tracer = Drawing.new("Line")
     tracer.Thickness = 1
-    tracer.Transparency = 1
-    tracer.Color = settings.Color or Color3.new(1,1,1)
+
+    local healthBar = Drawing.new("Square")
+    healthBar.Filled = true
+    healthBar.Thickness = 0
+
+    local healthOutline = Drawing.new("Square")
+    healthOutline.Filled = false
+    healthOutline.Thickness = 1
+    healthOutline.Color = Color3.new(0,0,0)
 
     local humanoid = part.Parent and part.Parent:FindFirstChildOfClass("Humanoid")
 
     return {
         Part = part,
-        Box = box,
-        Outline = outline,
         Text = text,
         Tracer = tracer,
+        HealthBar = healthBar,
+        HealthOutline = healthOutline,
         Humanoid = humanoid,
-        Settings = settings
+        Settings = settings,
+        Cache = {}
     }
 end
 
--- Updates all ESP objects
+--====================================================
+-- UPDATE LOOP
+--====================================================
+
 function DrawingESP:Update()
     local char = LocalPlayer.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return end
 
     local viewport = Camera.ViewportSize
+    local center = Vector2.new(viewport.X/2, viewport.Y/2)
 
     for _, group in pairs(self.Groups) do
         if not group.Enabled then continue end
 
         local maxDist = group.MaxDistance or group.Settings.MaxDistance
+        local fov = group.FOV or 9999
 
         for i = #group.Objects, 1, -1 do
             local esp = group.Objects[i]
             local part = esp.Part
 
             if not part or not part.Parent then
-                esp.Box:Remove()
-                esp.Outline:Remove()
-                esp.Text:Remove()
-                esp.Tracer:Remove()
+                for _,v in pairs(esp) do
+                    if typeof(v) == "userdata" and v.Remove then
+                        v:Remove()
+                    end
+                end
                 table.remove(group.Objects, i)
                 continue
             end
 
             local dist = (part.Position - root.Position).Magnitude
+            if dist > maxDist then goto hide end
 
-            if dist > maxDist then
-                esp.Box.Visible = false
-                esp.Outline.Visible = false
-                esp.Text.Visible = false
-                esp.Tracer.Visible = false
-                continue
+            local pos, onScreen = WorldToScreen(part.Position)
+
+            -- 🎯 FOV
+            if (pos - center).Magnitude > fov then goto hide end
+
+            -- 👁 visibility
+            if group.VisibleCheck and not IsVisible(root.Position, part.Position, {char}) then
+                goto hide
             end
 
-            local pos, onScreen = Camera:WorldToViewportPoint(part.Position)
+            local size = math.clamp(300 / dist * 10, 30, 200)
+            local boxPos = Vector2.new(pos.X - size/2, pos.Y - size/2)
+            local color = group.Color or group.Settings.Color
 
-            -- clamp for offscreen
-            local clamped = Vector2.new(
-                math.clamp(pos.X, 0, viewport.X),
-                math.clamp(pos.Y, 0, viewport.Y)
-            )
+            -- 📦 CORNER BOX
+            if group.Box then
+                local corners = GetCorners(boxPos, Vector2.new(size,size))
+                for _,line in pairs(corners) do
+                    local l = Drawing.new("Line")
+                    l.From = line[1]
+                    l.To = line[2]
+                    l.Color = color
+                    l.Thickness = 1
+                    l.Visible = true
+                    task.delay(0, function() l:Remove() end)
+                end
+            end
 
-            --================
-            -- BOX + TEXT
-            --================
-            if onScreen then
-                local size = math.clamp(300 / dist * 10, 30, 200)
-                local boxPos = Vector2.new(pos.X - size/2, pos.Y - size/2)
-
-                if group.Box ~= false then
-                    esp.Box.Position = boxPos
-                    esp.Box.Size = Vector2.new(size, size)
-                    esp.Box.Color = group.Color or group.Settings.Color
-                    esp.Box.Visible = true
-
-                    esp.Outline.Position = boxPos
-                    esp.Outline.Size = Vector2.new(size, size)
-                    esp.Outline.Visible = true
-                else
-                    esp.Box.Visible = false
-                    esp.Outline.Visible = false
+            -- 🦴 SKELETON (basic)
+            if group.Skeleton and esp.Humanoid and part.Parent then
+                local char = part.Parent
+                local function draw(a,b)
+                    local p1, v1 = WorldToScreen(a.Position)
+                    local p2, v2 = WorldToScreen(b.Position)
+                    if v1 and v2 then
+                        local l = Drawing.new("Line")
+                        l.From = p1
+                        l.To = p2
+                        l.Color = color
+                        l.Thickness = 1
+                        l.Visible = true
+                        task.delay(0, function() l:Remove() end)
+                    end
                 end
 
-                if group.Text ~= false then
-                    local textStr = esp.Settings.Name or part.Name
+                local head = char:FindFirstChild("Head")
+                local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+                local hrp = char:FindFirstChild("HumanoidRootPart")
 
-                    if group.ShowDistance or group.Settings.ShowDistance then
-                        textStr = textStr .. (" [%d]"):format(dist)
-                    end
+                if head and torso then draw(head, torso) end
+                if torso and hrp then draw(torso, hrp) end
+            end
 
-                    -- health (players)
-                    if group.ShowHealth and esp.Humanoid then
-                        textStr = textStr .. (" | %d"):format(esp.Humanoid.Health)
-                    end
+            -- ❤️ HEALTH BAR
+            if group.HealthBar and esp.Humanoid then
+                local hp = esp.Humanoid.Health / esp.Humanoid.MaxHealth
+                local barH = size * hp
 
-                    esp.Text.Position = Vector2.new(pos.X, boxPos.Y - 15)
-                    esp.Text.Text = textStr
-                    esp.Text.Color = group.Color or group.Settings.Color
-                    esp.Text.Visible = true
-                else
-                    esp.Text.Visible = false
-                end
+                esp.HealthBar.Position = Vector2.new(boxPos.X - 6, boxPos.Y + (size - barH))
+                esp.HealthBar.Size = Vector2.new(3, barH)
+                esp.HealthBar.Color = Color3.fromRGB(255*(1-hp),255*hp,0)
+                esp.HealthBar.Visible = true
+
+                esp.HealthOutline.Position = Vector2.new(boxPos.X - 6, boxPos.Y)
+                esp.HealthOutline.Size = Vector2.new(3, size)
+                esp.HealthOutline.Visible = true
             else
-                esp.Box.Visible = false
-                esp.Outline.Visible = false
+                esp.HealthBar.Visible = false
+                esp.HealthOutline.Visible = false
+            end
+
+            -- 📝 TEXT
+            if group.Text then
+                local t = esp.Settings.Name or part.Name
+
+                if group.ShowDistance then
+                    t = t .. (" [%d]"):format(dist)
+                end
+
+                esp.Text.Text = t
+                esp.Text.Position = Vector2.new(pos.X, boxPos.Y - 15)
+                esp.Text.Color = color
+                esp.Text.Visible = true
+            else
                 esp.Text.Visible = false
             end
 
-            --================
-            -- TRACER (ALWAYS)
-            --================
+            -- 🔫 TRACER
             if group.Tracer then
-                esp.Tracer.From = Vector2.new(viewport.X/2, viewport.Y)
-                esp.Tracer.To = clamped
-                esp.Tracer.Color = group.Color or group.Settings.Color
+                esp.Tracer.From = Vector2.new(center.X, viewport.Y)
+                esp.Tracer.To = pos
+                esp.Tracer.Color = color
                 esp.Tracer.Visible = true
             else
                 esp.Tracer.Visible = false
             end
+
+            continue
+
+            ::hide::
+            esp.Text.Visible = false
+            esp.Tracer.Visible = false
+            esp.HealthBar.Visible = false
+            esp.HealthOutline.Visible = false
         end
     end
 end
 
-RunService.RenderStepped:Connect(function() DrawingESP:Update() end)
+RunService.RenderStepped:Connect(function()
+    DrawingESP:Update()
+end)
 
---[[ 
-    Creates a visual group
-    @param Tab Fluent tab section
-    @param Title string - Name of the ESP group
-    @param Data table - Configuration
-        Container Instance - Folder/Model for parts
-        Color Color3 - Box color
-        MaxDistance number - Distance
-        IsPlayerESP boolean - ESP for players
-        Enabled boolean - Default enabled state
-]]
+--====================================================
+-- GROUP CREATION
+--====================================================
 
 function DrawingESP:CreateGroup(Name, Data)
     DrawingESP.Groups[Name] = {
         Objects = {},
         Enabled = Data.Enabled or false,
+
+        Color = Data.Color,
+        MaxDistance = Data.MaxDistance or 200,
+
         Box = true,
         Text = true,
+        Tracer = false,
+        Skeleton = false,
+        HealthBar = false,
+
+        ShowDistance = true,
+        VisibleCheck = false,
+        FOV = 9999,
+
         Settings = {
             Color = Data.Color or Color3.new(1,1,1),
-            MaxDistance = Data.MaxDistance or 200,
-            ShowDistance = true
+            MaxDistance = Data.MaxDistance or 200
         }
     }
 
@@ -201,8 +268,7 @@ function DrawingESP:CreateGroup(Name, Data)
     local function Add(part, name)
         if not part then return end
         table.insert(Group.Objects, DrawingESP:NewESP(part,{
-            Name = name or Name,
-            Color = Group.Settings.Color
+            Name = name or Name
         }))
     end
 
@@ -242,21 +308,3 @@ function DrawingESP:CreateGroup(Name, Data)
 end
 
 return DrawingESP
-
---[[
-Example Usage:
-
-local ESP = loadstring(game:HttpGet("https://raw.githubusercontent.com/yourname/DrawingESP/main/ESP.lua"))()
-ESP:CreateVisual(Tabs.Visuals, "Players", {
-    IsPlayerESP = true,
-    Color = Color3.fromRGB(255,100,100),
-    MaxDistance = 300,
-    Enabled = true
-})
-ESP:CreateVisual(Tabs.Visuals, "Diamonds", {
-    Container = workspace:FindFirstChild("CollectibleDiamonds"),
-    Color = Color3.fromRGB(0,255,255),
-    MaxDistance = 250,
-    Enabled = true
-})
-]]
