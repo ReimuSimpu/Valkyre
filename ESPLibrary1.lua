@@ -1,4 +1,3 @@
--- Script made by ChatGPT & Deepseek (mainly to see how well they could perform then claude decided to be a bitch no do)
 local DrawingESP = {}
 DrawingESP.__index = DrawingESP
 
@@ -6,7 +5,6 @@ DrawingESP.Groups = {}
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
-local Camera = workspace.CurrentCamera
 local RunService = game:GetService("RunService")
 
 --====================================================
@@ -39,6 +37,9 @@ end
 --====================================================
 
 function DrawingESP:Update()
+    local Camera = workspace.CurrentCamera
+    if not Camera then return end
+
     local char = LocalPlayer.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return end
@@ -52,13 +53,17 @@ function DrawingESP:Update()
             local part = esp.Part
 
             if not part or not part.Parent then
-                esp.Box:Remove()
-                esp.Text:Remove()
+                pcall(function() esp.Box:Remove() end)
+                pcall(function() esp.Text:Remove() end)
+
+                if group._addedParts then
+                    group._addedParts[part] = nil
+                end
+
                 table.remove(group.Objects, i)
                 continue
             end
 
-            -- 🛑 FIX: ALWAYS hide if disabled
             if not group.Enabled then
                 esp.Box.Visible = false
                 esp.Text.Visible = false
@@ -73,17 +78,16 @@ function DrawingESP:Update()
             end
 
             local pos, onScreen = Camera:WorldToViewportPoint(part.Position)
-
             if not onScreen then
                 esp.Box.Visible = false
                 esp.Text.Visible = false
                 continue
             end
 
-            local size = math.clamp(300 / dist * 10, 25, 150)
+            local size = math.clamp(300 / math.max(dist, 5) * 10, 25, 150)
             local boxPos = Vector2.new(pos.X - size/2, pos.Y - size/2)
 
-            -- 📦 BOX
+            -- BOX
             if group.Box then
                 esp.Box.Position = boxPos
                 esp.Box.Size = Vector2.new(size, size)
@@ -93,9 +97,8 @@ function DrawingESP:Update()
                 esp.Box.Visible = false
             end
 
-            -- 📝 TEXT with distance
+            -- TEXT
             if group.Text then
-                -- Format distance to 1 decimal place
                 local distText = string.format("%.1f", dist)
                 esp.Text.Text = esp.Name .. " [" .. distText .. "m]"
                 esp.Text.Position = Vector2.new(pos.X, boxPos.Y - 15)
@@ -108,9 +111,17 @@ function DrawingESP:Update()
     end
 end
 
-RunService.RenderStepped:Connect(function()
-    DrawingESP:Update()
-end)
+-- Throttled update (better performance)
+do
+    local Accum = 0
+    RunService.RenderStepped:Connect(function(dt)
+        Accum += dt
+        if Accum < 0.03 then return end -- ~30 FPS
+        Accum = 0
+
+        DrawingESP:Update()
+    end)
+end
 
 --====================================================
 -- GROUP SYSTEM
@@ -121,41 +132,35 @@ function DrawingESP:CreateGroup(Name, Data)
         return DrawingESP.Groups[Name]
     end
 
-    DrawingESP.Groups[Name] = {
+    local Group = {
         Objects = {},
         Enabled = Data.Enabled or false,
         Color = Data.Color or Color3.new(1,1,1),
         MaxDistance = Data.MaxDistance or 200,
         Box = true,
-        Text = true
+        Text = true,
+        _addedParts = {}
     }
 
-    local Group = DrawingESP.Groups[Name]
-    
-    -- Track added parts to prevent duplicates
-    local addedParts = {}
+    DrawingESP.Groups[Name] = Group
 
     local function Add(part, name)
-        if not part then return end
-        -- Check if we already added this part
-        if addedParts[part] then return end
-        
+        if not part or Group._addedParts[part] then return end
+
         table.insert(Group.Objects, DrawingESP:NewESP(part, name))
-        addedParts[part] = true
+        Group._addedParts[part] = true
     end
 
     -- OBJECT ESP
     if Data.Container then
-        -- Add existing parts
         for _,v in pairs(Data.Container:GetDescendants()) do
-            if v:IsA("BasePart") and not addedParts[v] then
+            if v:IsA("BasePart") then
                 Add(v)
             end
         end
 
-        -- Handle new parts
         Data.Container.DescendantAdded:Connect(function(v)
-            if v:IsA("BasePart") and not addedParts[v] then
+            if v:IsA("BasePart") then
                 Add(v)
             end
         end)
@@ -167,8 +172,8 @@ function DrawingESP:CreateGroup(Name, Data)
             if plr == LocalPlayer then return end
 
             local function Setup(char)
-                local root = char:WaitForChild("HumanoidRootPart", 5)
-                if root and not addedParts[root] then
+                local root = char:FindFirstChild("HumanoidRootPart")
+                if root then
                     Add(root, plr.Name)
                 end
             end
@@ -177,7 +182,9 @@ function DrawingESP:CreateGroup(Name, Data)
                 Setup(plr.Character)
             end
 
-            plr.CharacterAdded:Connect(Setup)
+            plr.CharacterAdded:Connect(function(char)
+                task.defer(Setup, char)
+            end)
         end
 
         for _,p in pairs(Players:GetPlayers()) do
