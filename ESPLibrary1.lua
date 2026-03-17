@@ -1,4 +1,4 @@
--- Script made by ChatGPT
+-- Script made by ChatGPT & Deepseek (mainly to see how well they could perform then claude decided to be a bitch no do)
 local DrawingESP = {}
 DrawingESP.__index = DrawingESP
 
@@ -93,9 +93,11 @@ function DrawingESP:Update()
                 esp.Box.Visible = false
             end
 
-            -- 📝 TEXT (name only)
+            -- 📝 TEXT with distance
             if group.Text then
-                esp.Text.Text = esp.Name
+                -- Format distance to 1 decimal place
+                local distText = string.format("%.1f", dist)
+                esp.Text.Text = esp.Name .. " [" .. distText .. "m]"
                 esp.Text.Position = Vector2.new(pos.X, boxPos.Y - 15)
                 esp.Text.Color = color
                 esp.Text.Visible = true
@@ -129,22 +131,31 @@ function DrawingESP:CreateGroup(Name, Data)
     }
 
     local Group = DrawingESP.Groups[Name]
+    
+    -- Track added parts to prevent duplicates
+    local addedParts = {}
 
     local function Add(part, name)
         if not part then return end
+        -- Check if we already added this part
+        if addedParts[part] then return end
+        
         table.insert(Group.Objects, DrawingESP:NewESP(part, name))
+        addedParts[part] = true
     end
 
     -- OBJECT ESP
     if Data.Container then
+        -- Add existing parts
         for _,v in pairs(Data.Container:GetDescendants()) do
-            if v:IsA("BasePart") then
+            if v:IsA("BasePart") and not addedParts[v] then
                 Add(v)
             end
         end
 
+        -- Handle new parts
         Data.Container.DescendantAdded:Connect(function(v)
-            if v:IsA("BasePart") then
+            if v:IsA("BasePart") and not addedParts[v] then
                 Add(v)
             end
         end)
@@ -157,7 +168,7 @@ function DrawingESP:CreateGroup(Name, Data)
 
             local function Setup(char)
                 local root = char:WaitForChild("HumanoidRootPart", 5)
-                if root then
+                if root and not addedParts[root] then
                     Add(root, plr.Name)
                 end
             end
