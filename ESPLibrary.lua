@@ -132,85 +132,76 @@ function DrawingESP:CreateGroup(Name, Data)
         return DrawingESP.Groups[Name]
     end
 
-    local Group = {
+    DrawingESP.Groups[Name] = {
         Objects = {},
         Enabled = Data.Enabled or false,
         Color = Data.Color or Color3.new(1,1,1),
         MaxDistance = Data.MaxDistance or 200,
         Box = true,
-        Text = true,
-        _addedParts = {}
+        Text = true
     }
 
-    DrawingESP.Groups[Name] = Group
+    local Group = DrawingESP.Groups[Name]
+    local addedParts = {}
 
-    local function Add(part, name)
-        if not part then return end
-        if DrawingESP._globalParts[part] then return end
+    local function Add(v)
+        if not v then return end
+        
+        -- Logic to determine WHAT to track
+        local targetPart = nil
+        local displayName = v.Name
 
-        table.insert(Group.Objects, DrawingESP:NewESP(part, name))
-        Group._addedParts[part] = true
-        DrawingESP._globalParts[part] = true
-    end
-
-    --====================================================
-    -- OBJECT ESP (FIXED)
-    --====================================================
-
-    if Data.Container then
-        local function Handle(v)
-            if not v:IsA("BasePart") then return end
-
-            local model = v:FindFirstAncestorOfClass("Model")
-
-            -- ❌ Ignore player characters / humanoids
-            if model and model:FindFirstChildOfClass("Humanoid") then
-                return
-            end
-
-            -- ✅ If model has PrimaryPart, only track that
-            if model and model.PrimaryPart then
-                Add(model.PrimaryPart, model.Name)
+        if v:IsA("Model") then
+            -- Use PrimaryPart if it exists, otherwise the first part found
+            targetPart = v.PrimaryPart or v:FindFirstChildWhichIsA("BasePart")
+        elseif v:IsA("BasePart") then
+            -- If it's a loose part not inside a model, track it
+            if not v.Parent:IsA("Model") then
+                targetPart = v
             else
-                Add(v, v.Name)
+                -- If it IS in a model, we ignore it here because the Model check handles it
+                return 
             end
         end
 
-        for _,v in pairs(Data.Container:GetDescendants()) do
-            Handle(v)
+        if targetPart and not addedParts[targetPart] then
+            table.insert(Group.Objects, DrawingESP:NewESP(targetPart, displayName))
+            addedParts[targetPart] = true
         end
-
-        Data.Container.DescendantAdded:Connect(Handle)
     end
 
-    --====================================================
-    -- PLAYER ESP
-    --====================================================
+    -- OBJECT ESP
+    if Data.Container then
+        -- We check Children instead of Descendants to avoid grabbing every sub-part
+        for _, v in pairs(Data.Container:GetChildren()) do
+            Add(v)
+        end
 
+        Data.Container.ChildAdded:Connect(function(v)
+            Add(v)
+        end)
+    end
+
+    -- PLAYER ESP (Remains same but cleaned up)
     if Data.IsPlayerESP then
         local function AddPlayer(plr)
             if plr == LocalPlayer then return end
-
-            local function Setup(char)
-                local root = char:FindFirstChild("HumanoidRootPart")
-                if root then
-                    Add(root, plr.Name)
+            plr.CharacterAdded:Connect(function(char)
+                local root = char:WaitForChild("HumanoidRootPart", 5)
+                if root and not addedParts[root] then
+                    table.insert(Group.Objects, DrawingESP:NewESP(root, plr.Name))
+                    addedParts[root] = true
+                end
+            end)
+            if plr.Character then
+                local root = plr.Character:FindFirstChild("HumanoidRootPart")
+                if root and not addedParts[root] then
+                    table.insert(Group.Objects, DrawingESP:NewESP(root, plr.Name))
+                    addedParts[root] = true
                 end
             end
-
-            if plr.Character then
-                Setup(plr.Character)
-            end
-
-            plr.CharacterAdded:Connect(function(char)
-                task.defer(Setup, char)
-            end)
         end
-
-        for _,p in pairs(Players:GetPlayers()) do
-            AddPlayer(p)
-        end
-
+        for _, p in pairs(Players:GetPlayers()) do AddPlayer(p) end
         Players.PlayerAdded:Connect(AddPlayer)
     end
 
