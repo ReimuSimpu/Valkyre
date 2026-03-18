@@ -237,7 +237,7 @@ function DrawingESP:CreateGroup(name, data)
             if plr == LocalPlayer then return end
 
             local function AddChar(char)
-                local hrp = char:WaitForChild("HumanoidRootPart", 5)
+                local hrp = char:WaitForChild("HumanoidRootPart")
                 if hrp and not addedParts[hrp] then
                     addedParts[hrp] = true
                     table.insert(group.Objects, DrawingESP:NewESP(hrp, plr.Name))
