@@ -3,11 +3,11 @@ local DrawingESP = {}
 DrawingESP.__index = DrawingESP
 
 DrawingESP.Groups = {}
-DrawingESP._globalParts = {}
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local RunService = game:GetService("RunService")
+local Camera = workspace.CurrentCamera
 
 --====================================================
 -- CREATE ESP OBJECT
@@ -30,8 +30,50 @@ function DrawingESP:NewESP(part, name)
         Part = part,
         Name = name or part.Name,
         Box = box,
-        Text = text
+        Text = text,
+        Alive = true,
     }
+end
+
+--====================================================
+-- SCREEN-SPACE BOX FROM BOUNDING BOX
+--====================================================
+
+local function GetScreenBounds(part, camera)
+    -- Sample the 8 corners of the part's bounding box in world space,
+    -- project each to screen, then return a tight 2D rect around them.
+    local cf = part.CFrame
+    local sz = part.Size / 2
+
+    local corners = {
+        cf * Vector3.new( sz.X,  sz.Y,  sz.Z),
+        cf * Vector3.new(-sz.X,  sz.Y,  sz.Z),
+        cf * Vector3.new( sz.X, -sz.Y,  sz.Z),
+        cf * Vector3.new(-sz.X, -sz.Y,  sz.Z),
+        cf * Vector3.new( sz.X,  sz.Y, -sz.Z),
+        cf * Vector3.new(-sz.X,  sz.Y, -sz.Z),
+        cf * Vector3.new( sz.X, -sz.Y, -sz.Z),
+        cf * Vector3.new(-sz.X, -sz.Y, -sz.Z),
+    }
+
+    local minX, minY = math.huge, math.huge
+    local maxX, maxY = -math.huge, -math.huge
+    local allOnScreen = false
+
+    for _, corner in ipairs(corners) do
+        local screen, onScreen = camera:WorldToViewportPoint(corner)
+        if screen.Z > 0 then  -- in front of camera
+            allOnScreen = true
+            if screen.X < minX then minX = screen.X end
+            if screen.Y < minY then minY = screen.Y end
+            if screen.X > maxX then maxX = screen.X end
+            if screen.Y > maxY then maxY = screen.Y end
+        end
+    end
+
+    if not allOnScreen then return nil end
+
+    return minX, minY, maxX - minX, maxY - minY
 end
 
 --====================================================
@@ -39,174 +81,182 @@ end
 --====================================================
 
 function DrawingESP:Update()
-    local Camera = workspace.CurrentCamera
-    if not Camera then return end
+    -- Re-grab camera each frame in case it changes
+    local cam = workspace.CurrentCamera
+    if not cam then return end
 
     local char = LocalPlayer.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return end
 
-    for _, group in pairs(self.Groups) do
-        local maxDist = group.MaxDistance or 200
-        local color = group.Color or Color3.new(1,1,1)
+    local rootPos = root.Position
 
-        for i = #group.Objects, 1, -1 do
+    for _, group in pairs(self.Groups) do
+        if not group.Enabled then
+            -- Hide everything in the group and skip heavy work
+            for _, esp in ipairs(group.Objects) do
+                esp.Box.Visible = false
+                esp.Text.Visible = false
+            end
+            continue
+        end
+
+        local maxDist = group.MaxDistance or 200
+        local color = group.Color or Color3.new(1, 1, 1)
+        local i = 1
+
+        while i <= #group.Objects do
             local esp = group.Objects[i]
             local part = esp.Part
 
-            if not part or not part.Parent then
-                pcall(function() esp.Box:Remove() end)
-                pcall(function() esp.Text:Remove() end)
+            -- Stale check: part removed or model destroyed
+            local isStale = not part
+                or not part.Parent
+                or (not part:IsDescendantOf(game))
 
+            if isStale then
+                -- Clean up drawings without pcall overhead
+                esp.Box:Remove()
+                esp.Text:Remove()
                 group._addedParts[part] = nil
-                DrawingESP._globalParts[part] = nil
-
                 table.remove(group.Objects, i)
+                -- Don't increment i — the next element slides into position i
                 continue
             end
 
-            if not group.Enabled then
-                esp.Box.Visible = false
-                esp.Text.Visible = false
-                continue
-            end
+            local dist = (part.Position - rootPos).Magnitude
 
-            local dist = (part.Position - root.Position).Magnitude
             if dist > maxDist then
                 esp.Box.Visible = false
                 esp.Text.Visible = false
+                i += 1
                 continue
             end
 
-            local pos, onScreen = Camera:WorldToViewportPoint(part.Position)
-            if not onScreen then
-                esp.Box.Visible = false
-                esp.Text.Visible = false
-                continue
+            -- Use the bounding-box projection for an accurate screen box
+            if group.Box or group.Text then
+                local x, y, w, h = GetScreenBounds(part, cam)
+
+                if not x then
+                    -- Part is fully behind the camera
+                    esp.Box.Visible = false
+                    esp.Text.Visible = false
+                    i += 1
+                    continue
+                end
+
+                if group.Box then
+                    esp.Box.Position = Vector2.new(x, y)
+                    esp.Box.Size = Vector2.new(w, h)
+                    esp.Box.Color = color
+                    esp.Box.Visible = true
+                else
+                    esp.Box.Visible = false
+                end
+
+                if group.Text then
+                    local distText = string.format("[%.0fm]", dist)
+                    esp.Text.Text = esp.Name .. " " .. distText
+                    -- Place text just above the top of the box
+                    esp.Text.Position = Vector2.new(x + w / 2, y - 16)
+                    esp.Text.Color = color
+                    esp.Text.Visible = true
+                else
+                    esp.Text.Visible = false
+                end
             end
 
-            local size = math.clamp(300 / math.max(dist, 5) * 10, 25, 150)
-            local boxPos = Vector2.new(pos.X - size/2, pos.Y - size/2)
-
-            -- BOX
-            if group.Box then
-                esp.Box.Position = boxPos
-                esp.Box.Size = Vector2.new(size, size)
-                esp.Box.Color = color
-                esp.Box.Visible = true
-            else
-                esp.Box.Visible = false
-            end
-
-            -- TEXT
-            if group.Text then
-                local distText = string.format("%.1f", dist)
-                esp.Text.Text = esp.Name .. " [" .. distText .. "m]"
-                esp.Text.Position = Vector2.new(pos.X, boxPos.Y - 15)
-                esp.Text.Color = color
-                esp.Text.Visible = true
-            else
-                esp.Text.Visible = false
-            end
+            i += 1
         end
     end
 end
 
--- Throttle for performance
+-- Throttle: ~33 fps is plenty for ESP; RenderStepped keeps it in sync with frames
 do
-    local Accum = 0
-    RunService.RenderStepped:Connect(LPH_NO_VIRTUALIZE(function(dt)
-        Accum += dt
-        if Accum < 0.03 then return end
-        Accum = 0
-
+    local accum = 0
+    RunService.RenderStepped:Connect(function(dt)
+        accum += dt
+        if accum < 0.03 then return end
+        accum = 0
         DrawingESP:Update()
-    end))
+    end)
 end
 
 --====================================================
 -- GROUP SYSTEM
 --====================================================
 
-function DrawingESP:CreateGroup(Name, Data)
-    if DrawingESP.Groups[Name] then
-        return DrawingESP.Groups[Name]
+function DrawingESP:CreateGroup(name, data)
+    if DrawingESP.Groups[name] then
+        return DrawingESP.Groups[name]
     end
 
-    DrawingESP.Groups[Name] = {
-        Objects = {},
-        Enabled = Data.Enabled or false,
-        Color = Data.Color or Color3.new(1,1,1),
-        MaxDistance = Data.MaxDistance or 200,
-        Box = true,
-        Text = true
+    local group = {
+        Objects    = {},
+        _addedParts = {},
+        Enabled    = data.Enabled    or false,
+        Color      = data.Color      or Color3.new(1, 1, 1),
+        MaxDistance = data.MaxDistance or 200,
+        Box        = true,
+        Text       = true,
     }
+    DrawingESP.Groups[name] = group
 
-    local Group = DrawingESP.Groups[Name]
-    local addedParts = {}
+    local addedParts = group._addedParts
 
-    local function Add(v)
+    local function TryAdd(v)
         if not v then return end
-        
-        -- Logic to determine WHAT to track
-        local targetPart = nil
-        local displayName = v.Name
+
+        local targetPart, displayName
 
         if v:IsA("Model") then
-            -- Use PrimaryPart if it exists, otherwise the first part found
-            targetPart = v.PrimaryPart or v:FindFirstChildWhichIsA("BasePart")
-        elseif v:IsA("BasePart") then
-            -- If it's a loose part not inside a model, track it
-            if not v.Parent:IsA("Model") then
-                targetPart = v
-            else
-                -- If it IS in a model, we ignore it here because the Model check handles it
-                return 
-            end
+            targetPart  = v.PrimaryPart or v:FindFirstChildWhichIsA("BasePart")
+            displayName = v.Name
+        elseif v:IsA("BasePart") and not v.Parent:IsA("Model") then
+            targetPart  = v
+            displayName = v.Name
         end
 
         if targetPart and not addedParts[targetPart] then
-            table.insert(Group.Objects, DrawingESP:NewESP(targetPart, displayName))
             addedParts[targetPart] = true
+            table.insert(group.Objects, DrawingESP:NewESP(targetPart, displayName))
         end
     end
 
-    -- OBJECT ESP
-    if Data.Container then
-        -- We check Children instead of Descendants to avoid grabbing every sub-part
-        for _, v in pairs(Data.Container:GetChildren()) do
-            Add(v)
+    -- OBJECT / CONTAINER ESP
+    if data.Container then
+        for _, v in ipairs(data.Container:GetChildren()) do
+            TryAdd(v)
         end
-
-        Data.Container.ChildAdded:Connect(function(v)
-            Add(v)
-        end)
+        data.Container.ChildAdded:Connect(TryAdd)
     end
 
-    -- PLAYER ESP (Remains same but cleaned up)
-    if Data.IsPlayerESP then
+    -- PLAYER ESP
+    if data.IsPlayerESP then
         local function AddPlayer(plr)
             if plr == LocalPlayer then return end
-            plr.CharacterAdded:Connect(function(char)
-                local root = char:WaitForChild("HumanoidRootPart", 5)
-                if root and not addedParts[root] then
-                    table.insert(Group.Objects, DrawingESP:NewESP(root, plr.Name))
-                    addedParts[root] = true
-                end
-            end)
-            if plr.Character then
-                local root = plr.Character:FindFirstChild("HumanoidRootPart")
-                if root and not addedParts[root] then
-                    table.insert(Group.Objects, DrawingESP:NewESP(root, plr.Name))
-                    addedParts[root] = true
+
+            local function AddChar(char)
+                local hrp = char:WaitForChild("HumanoidRootPart", 5)
+                if hrp and not addedParts[hrp] then
+                    addedParts[hrp] = true
+                    table.insert(group.Objects, DrawingESP:NewESP(hrp, plr.Name))
                 end
             end
+
+            plr.CharacterAdded:Connect(AddChar)
+            if plr.Character then
+                AddChar(plr.Character)
+            end
         end
-        for _, p in pairs(Players:GetPlayers()) do AddPlayer(p) end
+
+        for _, p in ipairs(Players:GetPlayers()) do
+            AddPlayer(p)
+        end
         Players.PlayerAdded:Connect(AddPlayer)
     end
 
-    return Group
+    return group
 end
 
 return DrawingESP
