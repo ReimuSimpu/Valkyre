@@ -30,7 +30,7 @@ function RangeSlider:AddToTab(Tab, Options)
     Wrapper.Size = UDim2.new(1, 0, 0, 62)
     Wrapper.BackgroundTransparency = 0.87
     Wrapper.BorderSizePixel = 0
-    Wrapper.LayoutOrder = #Container:GetChildren()
+    Wrapper.LayoutOrder = #Container:GetChildren() + 1
     Wrapper.Parent = Container
     
     Instance.new("UICorner", Wrapper).CornerRadius = UDim.new(0, 4)
