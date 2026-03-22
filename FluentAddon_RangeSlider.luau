@@ -19,7 +19,6 @@ function RangeSlider:AddToTab(Tab, Options)
     local Flag = Options.Flag or Title
 
     local Library = self.Fluent
-
     local Accent = Color3.fromRGB(96, 205, 255)
 
     local LowVal = DefaultLow
@@ -64,52 +63,56 @@ function RangeSlider:AddToTab(Tab, Options)
     local Fill = Instance.new("Frame")
     Fill.BackgroundColor3 = Accent
     Fill.BorderSizePixel = 0
-    Fill.Parent = Rail
     Fill.ZIndex = 2
+    Fill.Parent = Rail
     Instance.new("UICorner", Fill).CornerRadius = UDim.new(1, 0)
 
-    local function MakeHandle(z)
-        local h = Instance.new("Frame")
-        h.Size = UDim2.fromOffset(14, 14)
-        h.AnchorPoint = Vector2.new(0.5, 0.5)
-        h.Position = UDim2.new(0, 0, 0.5, 0)
-        h.BackgroundColor3 = Accent
-        h.ZIndex = z
-        h.Parent = Rail
-        Instance.new("UICorner", h).CornerRadius = UDim.new(1, 0)
-        return h
+    local function MakeHandle(Z)
+        local H = Instance.new("Frame")
+        H.Size = UDim2.fromOffset(14, 14)
+        H.AnchorPoint = Vector2.new(0.5, 0.5)
+        H.Position = UDim2.new(0, 0, 0.5, 0)
+        H.BackgroundColor3 = Accent
+        H.ZIndex = Z
+        H.Parent = Rail
+        Instance.new("UICorner", H).CornerRadius = UDim.new(1, 0)
+        return H
     end
 
     local HandleLow = MakeHandle(4)
     local HandleHigh = MakeHandle(5)
 
-    local function Snap(v)
-        return math.floor(v / Step + 0.5) * Step
+    local function Snap(V)
+        return math.floor(V / Step + 0.5) * Step
     end
 
     local function UpdateUI()
-        local lt = (LowVal - Min) / (Max - Min)
-        local ht = (HighVal - Min) / (Max - Min)
+        local LT = (LowVal - Min) / (Max - Min)
+        local HT = (HighVal - Min) / (Max - Min)
 
-        HandleLow.Position = UDim2.new(lt, 0, 0.5, 0)
-        HandleHigh.Position = UDim2.new(ht, 0, 0.5, 0)
+        HandleLow.Position = UDim2.new(LT, 0, 0.5, 0)
+        HandleHigh.Position = UDim2.new(HT, 0, 0.5, 0)
 
-        Fill.Position = UDim2.new(lt, 0, 0, 0)
-        Fill.Size = UDim2.new(ht - lt, 0, 1, 0)
+        Fill.Position = UDim2.new(LT, 0, 0, 0)
+        Fill.Size = UDim2.new(HT - LT, 0, 1, 0)
 
         ValueLabel.Text = LowVal .. " – " .. HighVal
     end
 
-    local function SetValue(low, high, fromLoad)
-        low = math.clamp(Snap(low), Min, Max)
-        high = math.clamp(Snap(high), Min, Max)
-
-        if low > high then
-            low, high = high, low
+    local function SetValue(Low, High, FromLoad)
+        if typeof(Low) == "table" then
+            Low, High = Low[1], Low[2]
         end
 
-        LowVal = low
-        HighVal = high
+        Low = math.clamp(Snap(Low), Min, Max)
+        High = math.clamp(Snap(High), Min, Max)
+
+        if Low > High then
+            Low, High = High, Low
+        end
+
+        LowVal = Low
+        HighVal = High
 
         UpdateUI()
 
@@ -117,36 +120,36 @@ function RangeSlider:AddToTab(Tab, Options)
             Library.Options[Flag].Value = {LowVal, HighVal}
         end
 
-        if not fromLoad then
+        if not FromLoad then
             Callback(LowVal, HighVal)
         end
     end
 
     local UIS = game:GetService("UserInputService")
 
-    local function Drag(handle, isLow)
-        handle.InputBegan:Connect(function(input)
-            if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+    local function Drag(Handle, IsLow)
+        Handle.InputBegan:Connect(function(Input)
+            if Input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 
-            local conn
-            conn = UIS.InputChanged:Connect(function(m)
-                if m.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+            local Conn
+            Conn = UIS.InputChanged:Connect(function(M)
+                if M.UserInputType ~= Enum.UserInputType.MouseMovement then return end
 
-                local rx = Rail.AbsolutePosition.X
-                local rw = Rail.AbsoluteSize.X
-                local t = math.clamp((m.Position.X - rx) / rw, 0, 1)
-                local v = Snap(Min + (Max - Min) * t)
+                local RX = Rail.AbsolutePosition.X
+                local RW = Rail.AbsoluteSize.X
+                local T = math.clamp((M.Position.X - RX) / RW, 0, 1)
+                local V = Snap(Min + (Max - Min) * T)
 
-                if isLow then
-                    SetValue(v, HighVal)
+                if IsLow then
+                    SetValue(V, HighVal)
                 else
-                    SetValue(LowVal, v)
+                    SetValue(LowVal, V)
                 end
             end)
 
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    conn:Disconnect()
+            Input.Changed:Connect(function()
+                if Input.UserInputState == Enum.UserInputState.End then
+                    Conn:Disconnect()
                 end
             end)
         end)
@@ -155,24 +158,23 @@ function RangeSlider:AddToTab(Tab, Options)
     Drag(HandleLow, true)
     Drag(HandleHigh, false)
 
-    -- Register with Fluent
     if Library then
         Library.Options = Library.Options or {}
 
         Library.Options[Flag] = {
+            Type = "RangeSlider",
             Value = {LowVal, HighVal},
-            SetValue = function(_, val)
-                SetValue(val[1], val[2], true)
+            SetValue = function(_, Val)
+                SetValue(Val, nil, true)
             end
         }
     end
 
-    -- Initial render
     SetValue(DefaultLow, DefaultHigh, true)
 
     return {
-        SetValue = function(_, l, h)
-            SetValue(l, h)
+        SetValue = function(_, L, H)
+            SetValue(L, H)
         end,
         GetValue = function()
             return LowVal, HighVal
