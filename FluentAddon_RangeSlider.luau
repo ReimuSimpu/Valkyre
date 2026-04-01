@@ -135,10 +135,15 @@ function RangeSlider:AddToTab(Tab, Options)
 
     UserInputService.InputChanged:Connect(function(Input)
         if not GlobalDragging then return end
-        if Input ~= GlobalDragging.Input then return end
 
-        if Input.UserInputType ~= Enum.UserInputType.MouseMovement 
-        and Input.UserInputType ~= Enum.UserInputType.Touch then
+        local isMouse = GlobalDragging.Input.UserInputType == Enum.UserInputType.MouseButton1
+        local isTouch = GlobalDragging.Input.UserInputType == Enum.UserInputType.Touch
+
+        if isMouse and Input.UserInputType ~= Enum.UserInputType.MouseMovement then
+            return
+        end
+
+        if isTouch and Input ~= GlobalDragging.Input then
             return
         end
 
@@ -151,6 +156,12 @@ function RangeSlider:AddToTab(Tab, Options)
             SetValue(V, HighVal)
         else
             SetValue(LowVal, V)
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(Input)
+        if GlobalDragging and Input == GlobalDragging.Input then
+            GlobalDragging = nil
         end
     end)
 
