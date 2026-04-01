@@ -1,6 +1,10 @@
 local RangeSlider = {}
 RangeSlider.__index = RangeSlider
 
+local UserInputService = game:GetService("UserInputService")
+
+local GlobalDragging = nil
+
 function RangeSlider:SetLibrary(Fluent)
     self.Fluent = Fluent
     return self
@@ -105,6 +109,9 @@ function RangeSlider:AddToTab(Tab, Options)
             Low, High = Low[1], Low[2]
         end
 
+        Low = Low ~= nil and Low or LowVal
+        High = High ~= nil and High or HighVal
+
         Low = math.clamp(Snap(Low), Min, Max)
         High = math.clamp(Snap(High), Min, Max)
 
@@ -126,38 +133,63 @@ function RangeSlider:AddToTab(Tab, Options)
         end
     end
 
-    local UIS = game:GetService("UserInputService")
+    UserInputService.InputChanged:Connect(function(Input)
+        if not GlobalDragging then return end
+        if Input ~= GlobalDragging.Input then return end
 
-    local function Drag(Handle, IsLow)
+        if Input.UserInputType ~= Enum.UserInputType.MouseMovement 
+        and Input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+
+        local RX = Rail.AbsolutePosition.X
+        local RW = Rail.AbsoluteSize.X
+        local T = math.clamp((Input.Position.X - RX) / RW, 0, 1)
+        local V = Snap(Min + (Max - Min) * T)
+
+        if GlobalDragging.IsLow then
+            SetValue(V, HighVal)
+        else
+            SetValue(LowVal, V)
+        end
+    end)
+
+    local function SetupDrag(Handle, IsLow)
         Handle.InputBegan:Connect(function(Input)
-            if Input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+            if Input.UserInputType == Enum.UserInputType.MouseButton1 
+            or Input.UserInputType == Enum.UserInputType.Touch then
+                GlobalDragging = {
+                    Input = Input,
+                    IsLow = IsLow
+                }
+            end
+        end)
 
-            local Conn
-            Conn = UIS.InputChanged:Connect(function(M)
-                if M.UserInputType ~= Enum.UserInputType.MouseMovement then return end
-
-                local RX = Rail.AbsolutePosition.X
-                local RW = Rail.AbsoluteSize.X
-                local T = math.clamp((M.Position.X - RX) / RW, 0, 1)
-                local V = Snap(Min + (Max - Min) * T)
-
-                if IsLow then
-                    SetValue(V, HighVal)
-                else
-                    SetValue(LowVal, V)
-                end
-            end)
-
-            Input.Changed:Connect(function()
-                if Input.UserInputState == Enum.UserInputState.End then
-                    Conn:Disconnect()
-                end
-            end)
+        Handle.InputEnded:Connect(function(Input)
+            if GlobalDragging and Input == GlobalDragging.Input then
+                GlobalDragging = nil
+            end
         end)
     end
 
-    Drag(HandleLow, true)
-    Drag(HandleHigh, false)
+    SetupDrag(HandleLow, true)
+    SetupDrag(HandleHigh, false)
+
+    Rail.InputBegan:Connect(function(Input)
+        if Input.UserInputType ~= Enum.UserInputType.MouseButton1 
+        and Input.UserInputType ~= Enum.UserInputType.Touch then return end
+
+        local RX = Rail.AbsolutePosition.X
+        local RW = Rail.AbsoluteSize.X
+        local T = math.clamp((Input.Position.X - RX) / RW, 0, 1)
+        local V = Snap(Min + (Max - Min) * T)
+
+        if math.abs(V - LowVal) < math.abs(V - HighVal) then
+            SetValue(V, HighVal)
+        else
+            SetValue(LowVal, V)
+        end
+    end)
 
     if Library then
         Library.Options = Library.Options or {}
