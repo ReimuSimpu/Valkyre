@@ -1,4 +1,3 @@
-
 loadstring([[ function LPH_NO_VIRTUALIZE(f) return f end; ]])();
 local DrawingESP = {}
 DrawingESP.__index = DrawingESP
@@ -8,7 +7,6 @@ DrawingESP.Groups = {}
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local RunService = game:GetService("RunService")
-local Camera = workspace.CurrentCamera
 
 --====================================================
 -- CREATE ESP OBJECT
@@ -34,45 +32,6 @@ function DrawingESP:NewESP(part, name)
         Text = text,
         Alive = true,
     }
-end
-
---====================================================
--- SCREEN-SPACE BOX FROM BOUNDING BOX
---====================================================
-
-local function GetScreenBounds(part, camera)
-    local cf = part.CFrame
-    local sz = part.Size / 2
-
-    local corners = {
-        cf * Vector3.new( sz.X,  sz.Y,  sz.Z),
-        cf * Vector3.new(-sz.X,  sz.Y,  sz.Z),
-        cf * Vector3.new( sz.X, -sz.Y,  sz.Z),
-        cf * Vector3.new(-sz.X, -sz.Y,  sz.Z),
-        cf * Vector3.new( sz.X,  sz.Y, -sz.Z),
-        cf * Vector3.new(-sz.X,  sz.Y, -sz.Z),
-        cf * Vector3.new( sz.X, -sz.Y, -sz.Z),
-        cf * Vector3.new(-sz.X, -sz.Y, -sz.Z),
-    }
-
-    local minX, minY = math.huge, math.huge
-    local maxX, maxY = -math.huge, -math.huge
-    local allOnScreen = false
-
-    for _, corner in ipairs(corners) do
-        local screen, onScreen = camera:WorldToViewportPoint(corner)
-        if screen.Z > 0 then
-            allOnScreen = true
-            if screen.X < minX then minX = screen.X end
-            if screen.Y < minY then minY = screen.Y end
-            if screen.X > maxX then maxX = screen.X end
-            if screen.Y > maxY then maxY = screen.Y end
-        end
-    end
-
-    if not allOnScreen then return nil end
-
-    return minX, minY, maxX - minX, maxY - minY
 end
 
 --====================================================
@@ -116,11 +75,12 @@ function DrawingESP:Update()
                 continue
             end
 
-            -- LIVE CHECK (IMPORTANT FIX)
-            local shouldRender = true
+            -- LIVE CHECK - respect _disabled flag
+            local shouldRender = not obj._disabled
             if group._check then
                 local inst = obj.Instance or part
                 shouldRender = group._check(inst, part)
+                obj._disabled = not shouldRender
             end
 
             if not shouldRender then
@@ -130,12 +90,12 @@ function DrawingESP:Update()
                 continue
             end
 
-            -- DISTANCE
+            -- DISTANCE CHECK
             if not part or not part:IsA("BasePart") then
                 i += 1
                 continue
             end
-            
+
             local dist = (part.Position - rootPos).Magnitude
             if dist > group.MaxDistance then
                 obj.Box.Visible = false
@@ -153,7 +113,8 @@ function DrawingESP:Update()
                 obj.Box.Visible = true
 
                 obj.Text.Position = Vector2.new(pos.X, pos.Y - 35)
-                obj.Text.Text = obj.Name .. string.format(" [%.0fm]", dist)
+                local displayDist = math.floor(dist + 0.5) -- Round to nearest integer
+                obj.Text.Text = obj.Name .. string.format(" [%dm]", displayDist)
                 obj.Text.Visible = true
             else
                 obj.Box.Visible = false
@@ -184,47 +145,47 @@ function DrawingESP:CreateGroup(name, data)
 
         Enabled = data.Enabled or false,
         MaxDistance = data.MaxDistance or 200,
-
-        _rescanTimer = 0,
     }
 
     DrawingESP.Groups[name] = group
 
     local function TryAdd(v)
         if not v then return end
-
+    
         local part
         if v:IsA("Model") then
             part = v.PrimaryPart or v:FindFirstChildWhichIsA("BasePart")
         elseif v:IsA("BasePart") then
             part = v
         end
-
-        if not part then return end
-
+    
+        -- ❗ HARD GUARD (prevents nil Position crash later)
+        if not part or not part:IsA("BasePart") then
+            return
+        end
+    
         local allowed = true
         if group._check then
-            allowed = group._check(v, part)
+            local ok, result = pcall(group._check, v, part)
+            allowed = ok and result
         end
-
+    
         local existing = group._added[part]
-
-        -- IF EXISTS → update state instead of duplicating
+    
         if existing then
             existing._disabled = not allowed
             return
         end
-
-        -- IF NOT ALLOWED → ignore
+    
         if not allowed then return end
-
+    
         local esp = {
             Part = part,
             Name = v.Name,
             Instance = v,
             _disabled = false,
         }
-
+    
         group._added[part] = esp
         table.insert(group.Objects, esp)
     end
@@ -262,12 +223,10 @@ function DrawingESP:CreateGroup(name, data)
 
                 if not allowed then return end
 
-                local esp = {
-                    Part = hrp,
-                    Name = plr.Name,
-                    Instance = plr,
-                    _disabled = false,
-                }
+                -- CREATE ESP OBJECT WITH DRAWINGS
+                local esp = DrawingESP:NewESP(hrp, plr.Name)
+                esp.Instance = plr
+                esp._disabled = false
 
                 group._added[hrp] = esp
                 table.insert(group.Objects, esp)
@@ -318,13 +277,11 @@ function DrawingESP:UpdateGroupCheck(name, newCheck)
     local group = self.Groups[name]
     if group then
         group._check = newCheck
-        -- Force a rescan to re-evaluate all objects
-        group._rescanTimer = 30
     end
 end
 
 --====================================================
--- UPDATE LOOP (HEARTBEAT FIX)
+-- UPDATE LOOP (HEARTBEAT)
 --====================================================
 
 local accum = 0
