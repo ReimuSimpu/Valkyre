@@ -1,3 +1,4 @@
+
 loadstring([[ function LPH_NO_VIRTUALIZE(f) return f end; ]])();
 local DrawingESP = {}
 DrawingESP.__index = DrawingESP
@@ -40,8 +41,6 @@ end
 --====================================================
 
 local function GetScreenBounds(part, camera)
-    -- Sample the 8 corners of the part's bounding box in world space,
-    -- project each to screen, then return a tight 2D rect around them.
     local cf = part.CFrame
     local sz = part.Size / 2
 
@@ -62,7 +61,7 @@ local function GetScreenBounds(part, camera)
 
     for _, corner in ipairs(corners) do
         local screen, onScreen = camera:WorldToViewportPoint(corner)
-        if screen.Z > 0 then  -- in front of camera
+        if screen.Z > 0 then
             allOnScreen = true
             if screen.X < minX then minX = screen.X end
             if screen.Y < minY then minY = screen.Y end
@@ -90,107 +89,75 @@ function DrawingESP:Update()
 
     local rootPos = root.Position
 
-    for _, group in pairs(self.Groups) do
+    for _, group in pairs(DrawingESP.Groups) do
+
+        -- DISABLED GROUP
         if not group.Enabled then
-            for _, esp in ipairs(group.Objects) do
-                esp.Box.Visible = false
-                esp.Text.Visible = false
+            for _, obj in ipairs(group.Objects) do
+                if obj.Box then obj.Box.Visible = false end
+                if obj.Text then obj.Text.Visible = false end
             end
             continue
         end
 
-        local maxDist = group.MaxDistance or 200
-        local color = group.Color or Color3.new(1, 1, 1)
         local i = 1
 
         while i <= #group.Objects do
-            local esp = group.Objects[i]
-            local part = esp.Part
+            local obj = group.Objects[i]
+            local part = obj.Part
 
-            --====================================================
-            -- 1. TRUE STALE CHECK (ONLY DELETION CONDITION)
-            --====================================================
-            local isDead =
-                not part
-                or not part.Parent
-                or not part:IsDescendantOf(game)
+            -- DEAD CHECK
+            if not part or not part.Parent or not part:IsDescendantOf(game) then
+                if obj.Box then obj.Box:Remove() end
+                if obj.Text then obj.Text:Remove() end
 
-            if isDead then
-                esp.Box:Remove()
-                esp.Text:Remove()
-                group._addedParts[part] = nil
+                group._added[part] = nil
                 table.remove(group.Objects, i)
                 continue
             end
 
-            --====================================================
-            -- 2. RUNTIME CHECK (HIDE ONLY, DO NOT DELETE)
-            --====================================================
-            if group._check and not group._check(part) then
-                esp.Box.Visible = false
-                esp.Text.Visible = false
+            -- LIVE CHECK (IMPORTANT FIX)
+            local shouldRender = true
+            if group._check then
+                local inst = obj.Instance or part
+                shouldRender = group._check(inst, part)
+            end
+
+            if not shouldRender then
+                obj.Box.Visible = false
+                obj.Text.Visible = false
                 i += 1
                 continue
             end
 
-            --====================================================
-            -- 3. DISTANCE CHECK
-            --====================================================
+            -- DISTANCE
             local dist = (part.Position - rootPos).Magnitude
-
-            if dist > maxDist then
-                esp.Box.Visible = false
-                esp.Text.Visible = false
+            if dist > group.MaxDistance then
+                obj.Box.Visible = false
+                obj.Text.Visible = false
                 i += 1
                 continue
             end
 
-            --====================================================
-            -- 4. SCREEN PROJECT
-            --====================================================
-            if group.Box or group.Text then
-                local x, y, w, h = GetScreenBounds(part, cam)
+            -- RENDER
+            local pos = cam:WorldToViewportPoint(part.Position)
 
-                if not x then
-                    esp.Box.Visible = false
-                    esp.Text.Visible = false
-                    i += 1
-                    continue
-                end
+            if pos.Z > 0 then
+                obj.Box.Position = Vector2.new(pos.X - 25, pos.Y - 25)
+                obj.Box.Size = Vector2.new(50, 50)
+                obj.Box.Visible = true
 
-                if group.Box then
-                    esp.Box.Position = Vector2.new(x, y)
-                    esp.Box.Size = Vector2.new(w, h)
-                    esp.Box.Color = color
-                    esp.Box.Visible = true
-                else
-                    esp.Box.Visible = false
-                end
-
-                if group.Text then
-                    esp.Text.Text = esp.Name .. string.format(" [%.0fm]", dist)
-                    esp.Text.Position = Vector2.new(x + w / 2, y - 16)
-                    esp.Text.Color = color
-                    esp.Text.Visible = true
-                else
-                    esp.Text.Visible = false
-                end
+                obj.Text.Position = Vector2.new(pos.X, pos.Y - 35)
+                obj.Text.Text = obj.Name .. string.format(" [%.0fm]", dist)
+                obj.Text.Visible = true
+            else
+                obj.Box.Visible = false
+                obj.Text.Visible = false
             end
 
             i += 1
         end
     end
-end
-
--- Throttle: ~33 fps is plenty for ESP; RenderStepped keeps it in sync with frames
-do
-    local accum = 0
-    RunService.RenderStepped:Connect(function(dt)
-        accum += dt
-        if accum < 0.03 then return end
-        accum = 0
-        DrawingESP:Update()
-    end)
 end
 
 --====================================================
@@ -204,84 +171,101 @@ function DrawingESP:CreateGroup(name, data)
 
     local group = {
         Objects = {},
-        _addedParts = {},
+        _added = {},
+
         _check = data.Check,
+        _container = data.Container,
+        _desc = data.Descendants,
+
         Enabled = data.Enabled or false,
-        Color = data.Color or Color3.new(1, 1, 1),
         MaxDistance = data.MaxDistance or 200,
-        Box = true,
-        Text = true,
+
+        _rescanTimer = 0,
     }
 
     DrawingESP.Groups[name] = group
-    local addedParts = group._addedParts
 
-    --====================================================
-    -- SAFE ADD FUNCTION
-    --====================================================
     local function TryAdd(v)
         if not v then return end
-    
-        if data.Check and not data.Check(v) then
+
+        local part
+        if v:IsA("Model") then
+            part = v.PrimaryPart or v:FindFirstChildWhichIsA("BasePart")
+        elseif v:IsA("BasePart") then
+            part = v
+        end
+
+        if not part then return end
+
+        local allowed = true
+        if group._check then
+            allowed = group._check(v, part)
+        end
+
+        local existing = group._added[part]
+
+        -- IF EXISTS → update state instead of duplicating
+        if existing then
+            existing._disabled = not allowed
             return
         end
-    
-        local targetPart
-        local displayName = v.Name
-    
-        if v:IsA("Model") then
-            targetPart = v.PrimaryPart or v:FindFirstChildWhichIsA("BasePart")
-    
-        elseif v:IsA("BasePart") then
-            targetPart = v
-        end
-    
-        if targetPart and not addedParts[targetPart] then
-            addedParts[targetPart] = true
-            table.insert(group.Objects, DrawingESP:NewESP(targetPart, displayName))
-        end
+
+        -- IF NOT ALLOWED → ignore
+        if not allowed then return end
+
+        local esp = {
+            Part = part,
+            Name = v.Name,
+            Instance = v,
+            _disabled = false,
+        }
+
+        group._added[part] = esp
+        table.insert(group.Objects, esp)
     end
 
-    --====================================================
-    -- CONTAINER + DESCENDANTS SUPPORT
-    --====================================================
     if data.Container then
+        local list = data.Descendants
+            and data.Container:GetDescendants()
+            or data.Container:GetChildren()
+
+        for _, v in ipairs(list) do
+            TryAdd(v)
+        end
 
         if data.Descendants then
-            -- FULL TREE SCAN
-            for _, v in ipairs(data.Container:GetDescendants()) do
-                TryAdd(v)
-            end
-
-            -- LIVE DESCENDANT TRACKING
-            data.Container.DescendantAdded:Connect(function(v)
-                TryAdd(v)
-            end)
+            data.Container.DescendantAdded:Connect(TryAdd)
         else
-            -- CHILD ONLY MODE (legacy behavior)
-            for _, v in ipairs(data.Container:GetChildren()) do
-                TryAdd(v)
-            end
-
-            data.Container.ChildAdded:Connect(function(v)
-                TryAdd(v)
-            end)
+            data.Container.ChildAdded:Connect(TryAdd)
         end
     end
 
-    --====================================================
-    -- PLAYER ESP
-    --====================================================
     if data.IsPlayerESP then
         local function AddPlayer(plr)
             if plr == LocalPlayer then return end
 
             local function AddChar(char)
                 local hrp = char:FindFirstChild("HumanoidRootPart")
-                if hrp and not addedParts[hrp] then
-                    addedParts[hrp] = true
-                    table.insert(group.Objects, DrawingESP:NewESP(hrp, plr.Name))
+                if not hrp then return end
+
+                if group._added[hrp] then return end
+
+                local allowed = true
+                if group._check then
+                    allowed = group._check(plr, hrp)
                 end
+
+                if not allowed then return end
+
+                local esp = {
+                    Part = hrp,
+                    Name = plr.Name,
+                    Instance = plr,
+                    _disabled = false,
+                }
+
+                group._added[hrp] = esp
+                table.insert(group.Objects, esp)
             end
 
             plr.CharacterAdded:Connect(AddChar)
@@ -299,5 +283,53 @@ function DrawingESP:CreateGroup(name, data)
 
     return group
 end
+
+--====================================================
+-- UTILITY FUNCTIONS
+--====================================================
+
+function DrawingESP:EnableGroup(name)
+    local group = self.Groups[name]
+    if group then
+        group.Enabled = true
+    end
+end
+
+function DrawingESP:DisableGroup(name)
+    local group = self.Groups[name]
+    if group then
+        group.Enabled = false
+    end
+end
+
+function DrawingESP:SetGroupDistance(name, distance)
+    local group = self.Groups[name]
+    if group then
+        group.MaxDistance = distance
+    end
+end
+
+function DrawingESP:UpdateGroupCheck(name, newCheck)
+    local group = self.Groups[name]
+    if group then
+        group._check = newCheck
+        -- Force a rescan to re-evaluate all objects
+        group._rescanTimer = 30
+    end
+end
+
+--====================================================
+-- UPDATE LOOP (HEARTBEAT FIX)
+--====================================================
+
+local accum = 0
+
+RunService.Heartbeat:Connect(function(dt)
+    accum += dt
+    if accum < 0.03 then return end
+    accum = 0
+
+    DrawingESP:Update()
+end)
 
 return DrawingESP
