@@ -81,7 +81,6 @@ end
 --====================================================
 
 function DrawingESP:Update()
-    -- Re-grab camera each frame in case it changes
     local cam = workspace.CurrentCamera
     if not cam then return end
 
@@ -93,7 +92,6 @@ function DrawingESP:Update()
 
     for _, group in pairs(self.Groups) do
         if not group.Enabled then
-            -- Hide everything in the group and skip heavy work
             for _, esp in ipairs(group.Objects) do
                 esp.Box.Visible = false
                 esp.Text.Visible = false
@@ -109,21 +107,35 @@ function DrawingESP:Update()
             local esp = group.Objects[i]
             local part = esp.Part
 
-            -- Stale check: part removed or model destroyed
-            local isStale = not part
+            --====================================================
+            -- 1. TRUE STALE CHECK (ONLY DELETION CONDITION)
+            --====================================================
+            local isDead =
+                not part
                 or not part.Parent
-                or (not part:IsDescendantOf(game))
+                or not part:IsDescendantOf(game)
 
-            if isStale then
-                -- Clean up drawings without pcall overhead
+            if isDead then
                 esp.Box:Remove()
                 esp.Text:Remove()
                 group._addedParts[part] = nil
                 table.remove(group.Objects, i)
-                -- Don't increment i — the next element slides into position i
                 continue
             end
 
+            --====================================================
+            -- 2. RUNTIME CHECK (HIDE ONLY, DO NOT DELETE)
+            --====================================================
+            if group._check and not group._check(part) then
+                esp.Box.Visible = false
+                esp.Text.Visible = false
+                i += 1
+                continue
+            end
+
+            --====================================================
+            -- 3. DISTANCE CHECK
+            --====================================================
             local dist = (part.Position - rootPos).Magnitude
 
             if dist > maxDist then
@@ -133,12 +145,13 @@ function DrawingESP:Update()
                 continue
             end
 
-            -- Use the bounding-box projection for an accurate screen box
+            --====================================================
+            -- 4. SCREEN PROJECT
+            --====================================================
             if group.Box or group.Text then
                 local x, y, w, h = GetScreenBounds(part, cam)
 
                 if not x then
-                    -- Part is fully behind the camera
                     esp.Box.Visible = false
                     esp.Text.Visible = false
                     i += 1
@@ -155,9 +168,7 @@ function DrawingESP:Update()
                 end
 
                 if group.Text then
-                    local distText = string.format("[%.0fm]", dist)
-                    esp.Text.Text = esp.Name .. " " .. distText
-                    -- Place text just above the top of the box
+                    esp.Text.Text = esp.Name .. string.format(" [%.0fm]", dist)
                     esp.Text.Position = Vector2.new(x + w / 2, y - 16)
                     esp.Text.Color = color
                     esp.Text.Visible = true
@@ -194,6 +205,7 @@ function DrawingESP:CreateGroup(name, data)
     local group = {
         Objects = {},
         _addedParts = {},
+        _check = data.Check,
         Enabled = data.Enabled or false,
         Color = data.Color or Color3.new(1, 1, 1),
         MaxDistance = data.MaxDistance or 200,
