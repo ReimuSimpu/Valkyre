@@ -192,29 +192,32 @@ function DrawingESP:CreateGroup(name, data)
     end
 
     local group = {
-        Objects    = {},
+        Objects = {},
         _addedParts = {},
-        Enabled    = data.Enabled    or false,
-        Color      = data.Color      or Color3.new(1, 1, 1),
+        Enabled = data.Enabled or false,
+        Color = data.Color or Color3.new(1, 1, 1),
         MaxDistance = data.MaxDistance or 200,
-        Box        = true,
-        Text       = true,
+        Box = true,
+        Text = true,
     }
-    DrawingESP.Groups[name] = group
 
+    DrawingESP.Groups[name] = group
     local addedParts = group._addedParts
 
+    --====================================================
+    -- SAFE ADD FUNCTION
+    --====================================================
     local function TryAdd(v)
         if not v then return end
 
-        local targetPart, displayName
+        local targetPart
+        local displayName = v.Name
 
         if v:IsA("Model") then
-            targetPart  = v.PrimaryPart or v:FindFirstChildWhichIsA("BasePart")
-            displayName = v.Name
-        elseif v:IsA("BasePart") and not v.Parent:IsA("Model") then
-            targetPart  = v
-            displayName = v.Name
+            targetPart = v.PrimaryPart or v:FindFirstChildWhichIsA("BasePart")
+
+        elseif v:IsA("BasePart") then
+            targetPart = v
         end
 
         if targetPart and not addedParts[targetPart] then
@@ -223,15 +226,36 @@ function DrawingESP:CreateGroup(name, data)
         end
     end
 
-    -- OBJECT / CONTAINER ESP
+    --====================================================
+    -- CONTAINER + DESCENDANTS SUPPORT
+    --====================================================
     if data.Container then
-        for _, v in ipairs(data.Container:GetChildren()) do
-            TryAdd(v)
+
+        if data.Descendants then
+            -- FULL TREE SCAN
+            for _, v in ipairs(data.Container:GetDescendants()) do
+                TryAdd(v)
+            end
+
+            -- LIVE DESCENDANT TRACKING
+            data.Container.DescendantAdded:Connect(function(v)
+                TryAdd(v)
+            end)
+        else
+            -- CHILD ONLY MODE (legacy behavior)
+            for _, v in ipairs(data.Container:GetChildren()) do
+                TryAdd(v)
+            end
+
+            data.Container.ChildAdded:Connect(function(v)
+                TryAdd(v)
+            end)
         end
-        data.Container.ChildAdded:Connect(TryAdd)
     end
 
+    --====================================================
     -- PLAYER ESP
+    --====================================================
     if data.IsPlayerESP then
         local function AddPlayer(plr)
             if plr == LocalPlayer then return end
@@ -253,6 +277,7 @@ function DrawingESP:CreateGroup(name, data)
         for _, p in ipairs(Players:GetPlayers()) do
             AddPlayer(p)
         end
+
         Players.PlayerAdded:Connect(AddPlayer)
     end
 
