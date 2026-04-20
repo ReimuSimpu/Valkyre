@@ -100,16 +100,6 @@ function DrawingESP:Update()
             end
             continue
         end
-        
-        -- Run check function if it exists
-        if group.Check and not group.Check() then
-            -- Check failed, hide all ESP in this group
-            for _, esp in ipairs(group.Objects) do
-                esp.Box.Visible = false
-                esp.Text.Visible = false
-            end
-            continue
-        end
 
         local maxDist = group.MaxDistance or 200
         local color = group.Color or Color3.new(1, 1, 1)
@@ -209,7 +199,6 @@ function DrawingESP:CreateGroup(name, data)
         MaxDistance = data.MaxDistance or 200,
         Box        = true,
         Text       = true,
-        Check      = data.Check,     -- Store the check function
     }
     DrawingESP.Groups[name] = group
 
