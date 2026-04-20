@@ -209,17 +209,21 @@ function DrawingESP:CreateGroup(name, data)
     --====================================================
     local function TryAdd(v)
         if not v then return end
-
+    
+        if data.Check and not data.Check(v) then
+            return
+        end
+    
         local targetPart
         local displayName = v.Name
-
+    
         if v:IsA("Model") then
             targetPart = v.PrimaryPart or v:FindFirstChildWhichIsA("BasePart")
-
+    
         elseif v:IsA("BasePart") then
             targetPart = v
         end
-
+    
         if targetPart and not addedParts[targetPart] then
             addedParts[targetPart] = true
             table.insert(group.Objects, DrawingESP:NewESP(targetPart, displayName))
