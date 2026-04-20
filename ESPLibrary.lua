@@ -131,6 +131,11 @@ function DrawingESP:Update()
             end
 
             -- DISTANCE
+            if not part or not part:IsA("BasePart") then
+                i += 1
+                continue
+            end
+            
             local dist = (part.Position - rootPos).Magnitude
             if dist > group.MaxDistance then
                 obj.Box.Visible = false
