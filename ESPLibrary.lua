@@ -96,7 +96,18 @@ function DrawingESP:Update()
                 continue
             end
 
-            local dist = (part.Position - rootPos).Magnitude
+            if not part or not part:IsA("BasePart") then
+                i += 1
+                continue
+            end
+            
+            local partPos = part.Position
+            if not partPos then
+                i += 1
+                continue
+            end
+            
+            local dist = (partPos - rootPos).Magnitude
             if dist > group.MaxDistance then
                 obj.Box.Visible = false
                 obj.Text.Visible = false
@@ -105,7 +116,7 @@ function DrawingESP:Update()
             end
 
             -- RENDER
-            local pos = cam:WorldToViewportPoint(part.Position)
+            local pos = cam:WorldToViewportPoint(partPos)
 
             if pos.Z > 0 then
                 obj.Box.Position = Vector2.new(pos.X - 25, pos.Y - 25)
