@@ -1,0 +1,248 @@
+local HaloUI = {}
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer
+
+local DecorateModeGui = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("DecorateModeGui")
+
+if not DecorateModeGui then
+    return {}
+end
+local BaseUI = DecorateModeGui:WaitForChild("FurnitureEditRemote")
+
+local UI
+local Active = {
+    Model = nil,
+    Base = nil,
+    Weld = nil,
+    Pos = Vector3.new(0, 1.5, 0),
+    Rot = CFrame.new(),
+    Undo = {},
+    Redo = {}
+}
+
+local TiltStep = math.rad(15)
+local MoveStep = 0.1
+local MaxHistory = 15
+
+local function Apply()
+    if not Active.Weld then return end
+    Active.Weld.C0 = CFrame.new(Active.Pos) * Active.Rot
+end
+
+local function Push()
+    table.insert(Active.Undo, {
+        Pos = Active.Pos,
+        Rot = Active.Rot
+    })
+
+    if #Active.Undo > MaxHistory then
+        table.remove(Active.Undo, 1)
+    end
+
+    Active.Redo = {}
+end
+
+--// movement
+function HaloUI.Move(axis, dir)
+    local char = LocalPlayer.Character
+    local head = char and char:FindFirstChild("Head")
+    if not head then return end
+
+    local cam = workspace.CurrentCamera.CFrame
+
+    local flat = CFrame.lookAt(
+        cam.Position * Vector3.new(1, 0, 1),
+        (cam.Position + cam.LookVector) * Vector3.new(1, 0, 1)
+    )
+
+    local rot = flat - flat.Position
+    local vec
+
+    if axis == "X" then
+        vec = rot.RightVector
+    elseif axis == "Z" then
+        vec = rot.LookVector
+    else
+        vec = Vector3.new(0, 1, 0)
+    end
+
+    Active.Pos += vec * dir * MoveStep
+    Push()
+    Apply()
+end
+
+--// tilt
+function HaloUI.Tilt(axis, dir)
+    if axis == "X" then
+        Active.Rot *= CFrame.Angles(TiltStep * dir, 0, 0)
+    elseif axis == "Y" then
+        Active.Rot *= CFrame.Angles(0, TiltStep * dir, 0)
+    else
+        Active.Rot *= CFrame.Angles(0, 0, TiltStep * dir)
+    end
+
+    Push()
+    Apply()
+end
+
+--// undo redo
+function HaloUI.Undo()
+    local last = table.remove(Active.Undo)
+    if not last then return end
+
+    table.insert(Active.Redo, {
+        Pos = Active.Pos,
+        Rot = Active.Rot
+    })
+
+    Active.Pos = last.Pos
+    Active.Rot = last.Rot
+    Apply()
+end
+
+function HaloUI.Redo()
+    local last = table.remove(Active.Redo)
+    if not last then return end
+
+    table.insert(Active.Undo, {
+        Pos = Active.Pos,
+        Rot = Active.Rot
+    })
+
+    Active.Pos = last.Pos
+    Active.Rot = last.Rot
+    Apply()
+end
+
+--// spawn setup
+function HaloUI.Set(model, base, head)
+    Active.Model = model
+    Active.Base = base
+
+    local weld = Instance.new("Weld")
+    weld.Part0 = head
+    weld.Part1 = base
+    weld.C0 = CFrame.new(Active.Pos) * Active.Rot
+    weld.Parent = base
+
+    Active.Weld = weld
+    Push()
+end
+
+--// clone UI
+function HaloUI.Init()
+    if UI then UI:Destroy() end
+
+    UI = BaseUI:Clone()
+    UI.Name = "HaloEditorUI"
+    UI.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    UI.Visible = true
+
+    local Sounds = UI:FindFirstChild("Sounds")
+
+    --// TILT BUTTONS
+    local tiltMap = {
+        TiltUp = {"X", 1},
+        TiltDown = {"X", -1},
+        TiltLeft = {"Z", -1},
+        TiltRight = {"Z", 1},
+        RotateLeft = {"Y", -1},
+        RotateRight = {"Y", 1}
+    }
+
+    for name, data in pairs(tiltMap) do
+        local btn = UI:FindFirstChild(name, true)
+        if btn then
+            btn.MouseButton1Down:Connect(function()
+                if Sounds and Sounds:FindFirstChild(name) then
+                    Sounds[name]:Play()
+                end
+
+                local holding = true
+
+                task.spawn(function()
+                    task.wait(0.1)
+                    while holding do
+                        HaloUI.Tilt(data[1], data[2])
+                        task.wait(0.03)
+                    end
+                end)
+
+                HaloUI.Tilt(data[1], data[2])
+
+                local c
+                c = UserInputService.InputEnded:Connect(function(i)
+                    if i.UserInputType == Enum.UserInputType.MouseButton1 then
+                        holding = false
+                        c:Disconnect()
+                    end
+                end)
+            end)
+        end
+    end
+
+    --// MOVE BUTTONS
+    local moveMap = {
+        MoveRight = {"X", 1},
+        MoveLeft = {"X", -1},
+        MoveForward = {"Z", 1},
+        MoveBackward = {"Z", -1},
+        MoveUp = {"Y", 1},
+        MoveDown = {"Y", -1}
+    }
+
+    for name, data in pairs(moveMap) do
+        local btn = UI:FindFirstChild(name, true)
+        if btn then
+            btn.MouseButton1Down:Connect(function()
+                if Sounds and Sounds:FindFirstChild("Move") then
+                    Sounds.Move:Play()
+                end
+
+                local holding = true
+
+                task.spawn(function()
+                    task.wait(0.1)
+                    while holding do
+                        HaloUI.Move(data[1], data[2])
+                        task.wait(0.03)
+                    end
+                end)
+
+                HaloUI.Move(data[1], data[2])
+
+                local c
+                c = UserInputService.InputEnded:Connect(function(i)
+                    if i.UserInputType == Enum.UserInputType.MouseButton1 then
+                        holding = false
+                        c:Disconnect()
+                    end
+                end)
+            end)
+        end
+    end
+
+    --// undo / redo
+    local undo = UI:FindFirstChild("Undo", true)
+    if undo then
+        undo.MouseButton1Click:Connect(HaloUI.Undo)
+    end
+
+    local redo = UI:FindFirstChild("Redo", true)
+    if redo then
+        redo.MouseButton1Click:Connect(HaloUI.Redo)
+    end
+
+    local close = UI:FindFirstChild("Close", true)
+    if close then
+        close.MouseButton1Click:Connect(function()
+            UI.Visible = false
+        end)
+    end
+end
+
+return HaloUI
