@@ -1,19 +1,25 @@
 local HaloUI = {}
 
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 
 local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
-local DecorateModeGui = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("DecorateModeGui")
-
+local DecorateModeGui = PlayerGui:WaitForChild("DecorateModeGui", 10)
 if not DecorateModeGui then
+    warn("Missing DecorateModeGui")
     return {}
 end
-local BaseUI = DecorateModeGui:WaitForChild("FurnitureEditRemote")
+
+local BaseUI = DecorateModeGui:WaitForChild("FurnitureEditRemote", 10)
+if not BaseUI then
+    warn("Missing FurnitureEditRemote")
+    return {}
+end
 
 local UI
+
 local Active = {
     Model = nil,
     Base = nil,
@@ -28,11 +34,14 @@ local TiltStep = math.rad(15)
 local MoveStep = 0.1
 local MaxHistory = 15
 
+--// APPLY WELD
 local function Apply()
-    if not Active.Weld then return end
-    Active.Weld.C0 = CFrame.new(Active.Pos) * Active.Rot
+    if Active.Weld then
+        Active.Weld.C0 = CFrame.new(Active.Pos) * Active.Rot
+    end
 end
 
+--// HISTORY
 local function Push()
     table.insert(Active.Undo, {
         Pos = Active.Pos,
@@ -46,17 +55,20 @@ local function Push()
     Active.Redo = {}
 end
 
---// movement
+--// MOVE
 function HaloUI.Move(axis, dir)
     local char = LocalPlayer.Character
     local head = char and char:FindFirstChild("Head")
     if not head then return end
 
-    local cam = workspace.CurrentCamera.CFrame
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+
+    local cf = cam.CFrame
 
     local flat = CFrame.lookAt(
-        cam.Position * Vector3.new(1, 0, 1),
-        (cam.Position + cam.LookVector) * Vector3.new(1, 0, 1)
+        cf.Position * Vector3.new(1, 0, 1),
+        (cf.Position + cf.LookVector) * Vector3.new(1, 0, 1)
     )
 
     local rot = flat - flat.Position
@@ -75,7 +87,7 @@ function HaloUI.Move(axis, dir)
     Apply()
 end
 
---// tilt
+--// TILT
 function HaloUI.Tilt(axis, dir)
     if axis == "X" then
         Active.Rot *= CFrame.Angles(TiltStep * dir, 0, 0)
@@ -89,7 +101,7 @@ function HaloUI.Tilt(axis, dir)
     Apply()
 end
 
---// undo redo
+--// UNDO
 function HaloUI.Undo()
     local last = table.remove(Active.Undo)
     if not last then return end
@@ -104,6 +116,7 @@ function HaloUI.Undo()
     Apply()
 end
 
+--// REDO
 function HaloUI.Redo()
     local last = table.remove(Active.Redo)
     if not last then return end
@@ -118,7 +131,7 @@ function HaloUI.Redo()
     Apply()
 end
 
---// spawn setup
+--// SET TARGET
 function HaloUI.Set(model, base, head)
     Active.Model = model
     Active.Base = base
@@ -133,18 +146,28 @@ function HaloUI.Set(model, base, head)
     Push()
 end
 
---// clone UI
+--// SAFE BUTTON FINDER (IMPORTANT FIX)
+local function FindButton(name)
+    for _, v in ipairs(UI:GetDescendants()) do
+        if v:IsA("GuiButton") and v.Name == name then
+            return v
+        end
+    end
+    return nil
+end
+
+--// INIT UI
 function HaloUI.Init()
     if UI then UI:Destroy() end
 
     UI = BaseUI:Clone()
     UI.Name = "HaloEditorUI"
-    UI.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    UI.Parent = PlayerGui
     UI.Visible = true
 
     local Sounds = UI:FindFirstChild("Sounds")
 
-    --// TILT BUTTONS
+    --// TILT MAP
     local tiltMap = {
         TiltUp = {"X", 1},
         TiltDown = {"X", -1},
@@ -155,7 +178,7 @@ function HaloUI.Init()
     }
 
     for name, data in pairs(tiltMap) do
-        local btn = UI:FindFirstChild(name, true)
+        local btn = FindButton(name)
         if btn then
             btn.MouseButton1Down:Connect(function()
                 if Sounds and Sounds:FindFirstChild(name) then
@@ -185,7 +208,7 @@ function HaloUI.Init()
         end
     end
 
-    --// MOVE BUTTONS
+    --// MOVE MAP
     local moveMap = {
         MoveRight = {"X", 1},
         MoveLeft = {"X", -1},
@@ -196,7 +219,7 @@ function HaloUI.Init()
     }
 
     for name, data in pairs(moveMap) do
-        local btn = UI:FindFirstChild(name, true)
+        local btn = FindButton(name)
         if btn then
             btn.MouseButton1Down:Connect(function()
                 if Sounds and Sounds:FindFirstChild("Move") then
@@ -226,18 +249,14 @@ function HaloUI.Init()
         end
     end
 
-    --// undo / redo
-    local undo = UI:FindFirstChild("Undo", true)
-    if undo then
-        undo.MouseButton1Click:Connect(HaloUI.Undo)
-    end
+    --// undo redo
+    local undo = FindButton("Undo")
+    if undo then undo.MouseButton1Click:Connect(HaloUI.Undo) end
 
-    local redo = UI:FindFirstChild("Redo", true)
-    if redo then
-        redo.MouseButton1Click:Connect(HaloUI.Redo)
-    end
+    local redo = FindButton("Redo")
+    if redo then redo.MouseButton1Click:Connect(HaloUI.Redo) end
 
-    local close = UI:FindFirstChild("Close", true)
+    local close = FindButton("Close")
     if close then
         close.MouseButton1Click:Connect(function()
             UI.Visible = false
